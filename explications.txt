@@ -13,3 +13,13 @@ pub async fn test(){} dans api.rs
 Dans le main: api::test().await;  //ne pas oublier await
 
 si vous vouler utiliser vos fonction dans un autre fichier que le main rajouttez juste "mod api;" en haut du fichier
+
+
+
+--------------------------------------------------------------
+fichier api.rs
+
+
+les structures serialize sont pour preparer le prompt que l'on va envoyer: on envoit du json pas du rust (composer du promt et d'options pour dire comment on veux la reponse)
+les structures deserialize sont pour recuperer la reponse json et la transformer en rust
+
