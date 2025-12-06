@@ -1,6 +1,7 @@
 use std::io::{self, Write};
-use crate::api;
+use crate::api::{self, Message};
 use crate::python_exec::CodeExecutor;
+use crate::utils::extract_python_code;
 
 // Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue 
 pub fn print_banner() {
@@ -38,7 +39,11 @@ pub fn display_code(code: &str) {
 pub async fn start_repl() {
     print_banner();
 
-    let executor = CodeExecutor::new("generated").expect("Impossible de créer le dossier"); // création d'un exécuteur qui va écrire les scripts python dans le dossier generated
+    let executor = CodeExecutor::new("generated").expect("Impossible de créer le dossier");
+    
+    // Conversation history for multi-turn refinement
+    let mut conversation_history: Vec<Message> = Vec::new();
+    let mut last_generated_code = String::new();
 
     loop {
         let prompt = ask_user("> ");
@@ -49,13 +54,57 @@ pub async fn start_repl() {
         }
 
         if prompt == "/help" {
-            println!("Available commands: /quit /help");
+            println!("Available commands:");
+            println!("  /quit, /exit  - Exit the program");
+            println!("  /help         - Show this help");
+            println!("  /clear        - Clear conversation history");
+            println!("  /refine       - Refine the last generated code");
             continue;
         }
 
-        // Call Hugging Face
-        match api::generate_code(&prompt).await {
-            Ok(code) => {
+        if prompt == "/clear" {
+            conversation_history.clear();
+            last_generated_code.clear();
+            println!("Conversation history cleared.");
+            continue;
+        }
+
+        if prompt == "/refine" {
+            if last_generated_code.is_empty() {
+                println!("No code to refine. Generate some code first!");
+                continue;
+            }
+            let refinement = ask_user("What would you like to change or add? ");
+            if refinement.is_empty() {
+                continue;
+            }
+            
+            // Add refinement request to history
+            conversation_history.push(Message {
+                role: "user".to_string(),
+                content: format!("Please refine the previous code: {}", refinement),
+            });
+        } else {
+            // Regular prompt - add to history
+            conversation_history.push(Message {
+                role: "user".to_string(),
+                content: prompt.clone(),
+            });
+        }
+
+        // Call Hugging Face with conversation history
+        match api::generate_code_with_history(conversation_history.clone()).await {
+            Ok(raw_response) => {
+                // Extract clean Python code from the response
+                let code = extract_python_code(&raw_response);
+                last_generated_code = code.clone();
+                
+                // Add assistant response to history
+                conversation_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: code.clone(),
+                });
+                
                 display_code(&code);
 
                 if confirm("Execute this script?") {
@@ -64,14 +113,18 @@ pub async fn start_repl() {
                             println!("--- Result ---");
                             println!("Script saved at: {:?}", result.script_path);
                             println!("STDOUT:\n{}", result.stdout);
-                            println!("STDERR:\n{}", result.stderr);
+                            if !result.stderr.is_empty() {
+                                println!("STDERR:\n{}", result.stderr);
+                            }
                         }
-                        Err(e) => println!("Erreur d'exécution: {}", e),
+                        Err(e) => println!("Execution error: {}", e),
                     }
                 }
             }
             Err(e) => {
                 println!("API error: {}", e);
+                // Remove the last user message if API call failed
+                conversation_history.pop();
             }
         }
     }
