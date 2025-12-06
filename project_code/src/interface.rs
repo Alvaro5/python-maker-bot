@@ -7,7 +7,7 @@ pub fn print_banner() {
     println!("====================================");
     println!("        PYTHON MAKER BOT v0.1       ");
     println!("====================================");
-    println!(" Écris ton idée ou /quit pour sortir\n");
+    println!(" Write your idea or /quit to exit\n");
 }
 
 // Fonction utilitaire pour poser des question à l'utilisateur et récupérer la réponse
@@ -29,7 +29,7 @@ pub fn confirm(question: &str) -> bool {
 
 // Fonction d'affichage pour le code python généré 
 pub fn display_code(code: &str) {
-    println!("----------- Code généré -----------");
+    println!("----------- Generated code -----------");
     println!("{code}");
     println!("-----------------------------------\n");
 }
@@ -44,24 +44,25 @@ pub async fn start_repl() {
         let prompt = ask_user("> ");
 
         if prompt == "/quit" || prompt == "/exit" {
-            println!("Au revoir !");
+            println!("Goodbye!");
             break;
         }
 
         if prompt == "/help" {
-            println!("Commande disponibles : /quit /help");
+            println!("Available commands: /quit /help");
             continue;
         }
 
-        // Appeler Hugging Face
+        // Call Hugging Face
         match api::generate_code(&prompt).await {
             Ok(code) => {
                 display_code(&code);
 
-                if confirm("Exécuter ce script ?") {
+                if confirm("Execute this script?") {
                     match executor.write_and_run(&code) {
                         Ok(result) => {
-                            println!("--- Résultat ---");
+                            println!("--- Result ---");
+                            println!("Script saved at: {:?}", result.script_path);
                             println!("STDOUT:\n{}", result.stdout);
                             println!("STDERR:\n{}", result.stderr);
                         }
@@ -70,7 +71,7 @@ pub async fn start_repl() {
                 }
             }
             Err(e) => {
-                println!("Erreur API : {}", e);
+                println!("API error: {}", e);
             }
         }
     }
