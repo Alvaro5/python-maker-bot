@@ -5,6 +5,7 @@ mod api;
 mod python_exec;
 mod interface;
 mod utils;
+mod logger;
 
 
 #[tokio::main]
