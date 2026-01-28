@@ -60,22 +60,68 @@ pub async fn generate_code_with_history(messages: Vec<Message>) -> Result<String
                  - USE try-except for any operations that could fail\n\
                  - TEST all variable references - never use undefined variables\n\
                  \n\
-                 FOR GAMES:\n\
-                 - Include COMPLETE game mechanics (collision detection, scoring, game over, restart)\n\
+                 FOR GAMES - CRITICAL PLAYABILITY RULES:\n\
+                 - Games MUST be actually playable and FUN - test physics and controls!\n\
                  - Define ALL colors at the top: WHITE, BLACK, RED, GREEN, BLUE, YELLOW\n\
-                 - Use VISIBLE, contrasting colors (avoid dark on dark)\n\
-                 - Add proper game states (playing, game_over) with state variables\n\
-                 - Include user instructions in comments or on-screen text\n\
-                 - Make it FUN and POLISHED, not just a basic prototype\n\
-                 - Initialize ALL sprite attributes (self.passed = False, self.scored = False, etc.)\n\
-                 - Check sprite group is not empty before collision: if len(group) > 0 and pygame.sprite.spritecollide(...)\n\
-                 - Use proper game loop with state management (if game_over: show game over, else: play game)\n\
-                 - DO NOT load external files (sounds, images, fonts) - code must be SELF-CONTAINED\n\
+                 - Use VISIBLE, contrasting colors (bright colors on light/dark backgrounds)\n\
+                 \n\
+                 KEYBOARD CONTROLS - MUST WORK:\n\
+                 - ALWAYS check for KEYDOWN events in the event loop\n\
+                 - For Flappy Bird: SPACE key must make bird jump UP immediately\n\
+                 - For Snake: Arrow keys must change direction immediately\n\
+                 - For Pong: WASD and arrow keys must move paddles smoothly\n\
+                 - Controls must be RESPONSIVE - player should feel in control\n\
+                 \n\
+                 PHYSICS - MUST FEEL GOOD:\n\
+                 - Gravity should be reasonable (0.4 to 0.8 for Flappy Bird)\n\
+                 - Jump/flap strength should overcome gravity easily (FLAP_STRENGTH = -8 to -12)\n\
+                 - Movement speed should be smooth and visible\n\
+                 - Frame rate: use 60 FPS for smooth gameplay\n\
+                 \n\
+                 FOR FLAPPY BIRD SPECIFICALLY:\n\
+                 - Bird must respond to SPACE key with upward velocity\n\
+                 - Gravity must be applied every frame: bird.velocity += GRAVITY\n\
+                 - Flap must set velocity negative: bird.velocity = FLAP_STRENGTH (e.g., -10)\n\
+                 - Bird position updates: bird.rect.y += int(bird.velocity)\n\
+                 \n\
+                 FLAPPY BIRD PIPES - CRITICAL:\n\
+                 - Pipes ALWAYS come in PAIRS: one from top, one from bottom\n\
+                 - There MUST be a GAP between top and bottom pipes (150-200 pixels)\n\
+                 - Gap position should be random but not too high or too low\n\
+                 - Example pipe creation:\n\
+                   gap_center = random.randint(200, 400)  # Center of gap\n\
+                   top_pipe_height = gap_center - GAP_SIZE//2\n\
+                   bottom_pipe_y = gap_center + GAP_SIZE//2\n\
+                 - Top pipe: rect.bottom should be at (gap_center - GAP_SIZE//2)\n\
+                 - Bottom pipe: rect.top should be at (gap_center + GAP_SIZE//2)\n\
+                 - First pipes should spawn off-screen (x = SCREEN_WIDTH + 100)\n\
+                 - Pipes move left at constant speed (3-5 pixels per frame)\n\
+                 - Spawn new pipe pair every 1.5-2 seconds\n\
+                 - Remove pipes when they go off-screen left (pipe.rect.right < 0)\n\
+                 - Collision must be accurate but not frustrating\n\
+                 - Score increases when bird passes the center of pipe pair\n\
+                 - Game must be beatable - not impossible\n\
+                 \n\
+                 GAME STRUCTURE:\n\
+                 - Use proper game states: 'start', 'playing', 'game_over'\n\
+                 - Start screen with instructions (Press SPACE to start)\n\
+                 - Display controls on screen or in comments\n\
+                 - Game over screen with final score and restart option\n\
+                 - Initialize ALL sprite attributes in __init__ (self.passed = False, etc.)\n\
+                 - Check sprite groups not empty before collision checks\n\
+                 - Proper restart: reset all variables, empty all sprite groups, recreate all sprites\n\
+                 \n\
+                 SELF-CONTAINED:\n\
+                 - DO NOT load external files (sounds, images, fonts)\n\
                  - Use pygame.font.Font(None, size) for default fonts only\n\
-                 - Skip sound effects or print to console for feedback\n\
                  - Generate all graphics with pygame.draw and Surface.fill()\n\
-                 - Proper restart: reset all variables, empty sprite groups, recreate sprites\n\
-                 - ENSURE the game runs without NameError, AttributeError, or IndexError".to_string(),
+                 - Print score updates to console if sound not available\n\
+                 \n\
+                 TESTING:\n\
+                 - Code must run without NameError, AttributeError, IndexError\n\
+                 - Player must be able to play for at least 30 seconds\n\
+                 - Controls must work on first try\n\
+                 - Game must be FUN - not too hard, not too easy".to_string(),
     }];
     
     // Add conversation history
@@ -84,7 +130,7 @@ pub async fn generate_code_with_history(messages: Vec<Message>) -> Result<String
     let body = ChatRequest {
         model: "Qwen/Qwen2.5-Coder-7B-Instruct".to_string(),
         messages: full_messages,
-        max_tokens: Some(8192),  // Increased for complete games and complex code
+        max_tokens: Some(16284),  // Increased for complete games and complex code
         temperature: Some(0.2),
     };
 
