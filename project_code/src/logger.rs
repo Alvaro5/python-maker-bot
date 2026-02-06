@@ -1,3 +1,4 @@
+use crate::utils::find_char_boundary;
 use anyhow::Result;
 use chrono::Local;
 use std::fs::{self, OpenOptions};
@@ -75,7 +76,8 @@ impl Logger {
 
     pub fn log_api_response(&self, response: &str) -> Result<()> {
         let preview = if response.len() > 200 {
-            format!("{}...", &response[..200])
+            let end = find_char_boundary(response, 200);
+            format!("{}...", &response[..end])
         } else {
             response.to_string()
         };

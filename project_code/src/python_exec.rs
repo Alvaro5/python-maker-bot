@@ -4,6 +4,8 @@ use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
+use wait_timeout::ChildExt;
 
 /// Mode d'exécution pour les scripts Python
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,6 +22,13 @@ pub struct CodeExecutionResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
+}
+
+impl CodeExecutionResult {
+    /// Returns true only when the process exited with code 0.
+    pub fn is_success(&self) -> bool {
+        self.exit_code == Some(0)
+    }
 }
 
 /// Responsable de l'écriture des scripts Python sur le disque et de leur exécution.
@@ -104,8 +113,43 @@ impl CodeExecutor {
             "plt.show",
             "matplotlib",
         ];
-        
+
         interactive_keywords.iter().any(|keyword| code.contains(keyword))
+    }
+
+    /// Write a Python script to disk, returning the path.
+    pub fn write_script(&self, code: &str) -> Result<PathBuf> {
+        let ts = Utc::now().format("%Y%m%d_%H%M%S");
+        let filename = format!("script_{ts}.py");
+        let script_path = self.base_dir.join(filename);
+        fs::write(&script_path, code)
+            .with_context(|| format!("Could not write the script {:?}", script_path))?;
+        Ok(script_path)
+    }
+
+    /// Run `python3 -m py_compile <path>` and return Ok(()) on success or
+    /// Err(message) with the compiler output on failure.
+    pub fn syntax_check(&self, path: &PathBuf) -> Result<(), String> {
+        let python_cmds = ["python3", "python"];
+        for cmd in python_cmds {
+            let output = Command::new(cmd)
+                .args(["-m", "py_compile"])
+                .arg(path)
+                .output();
+
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        return Ok(());
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                        return Err(stderr);
+                    }
+                }
+                Err(_) => continue, // try next interpreter
+            }
+        }
+        Err("Could not run syntax check with python/python3".to_string())
     }
 
     /// Écrit un script Python dans un fichier et l'exécute avec l'interpréteur `python` ou `python3`.
@@ -119,28 +163,22 @@ impl CodeExecutor {
 
     /// Écrit et exécute un script Python avec le mode d'exécution spécifié.
     pub fn write_and_run_with_mode(&self, code: &str, mode: ExecutionMode) -> Result<CodeExecutionResult> {
-        // Nom de fichier basé sur un timestamp pour éviter les collisions.
-        let ts = Utc::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("script_{ts}.py");
-        let script_path = self.base_dir.join(filename);
-
-        fs::write(&script_path, code)
-            .with_context(|| format!("Could not write the script {:?}", script_path))?;
-
-        self.execute_script(&script_path, mode)
+        let script_path = self.write_script(code)?;
+        self.execute_script(&script_path, mode, 0) // 0 = no timeout
     }
 
     /// Exécute un script Python existant avec le mode d'exécution spécifié.
-    pub fn run_existing_script(&self, script_path: &str, mode: ExecutionMode) -> Result<CodeExecutionResult> {
+    pub fn run_existing_script(&self, script_path: &str, mode: ExecutionMode, timeout_secs: u64) -> Result<CodeExecutionResult> {
         let path = PathBuf::from(script_path);
         if !path.exists() {
             return Err(anyhow::anyhow!("Script not found: {}", script_path));
         }
-        self.execute_script(&path, mode)
+        self.execute_script(&path, mode, timeout_secs)
     }
 
-    /// Fonction interne pour exécuter un script Python.
-    fn execute_script(&self, script_path: &PathBuf, mode: ExecutionMode) -> Result<CodeExecutionResult> {
+    /// Execute a Python script. `timeout_secs == 0` means no timeout.
+    /// Timeout only applies to `Captured` mode.
+    pub fn execute_script(&self, script_path: &PathBuf, mode: ExecutionMode, timeout_secs: u64) -> Result<CodeExecutionResult> {
         // On essaie d'abord `python3`, puis `python` si besoin.
         let python_cmds = ["python3", "python"];
 
@@ -150,8 +188,9 @@ impl CodeExecutor {
             match mode {
                 ExecutionMode::Interactive => {
                     // Mode interactif: hérite stdin/stdout/stderr pour l'interaction utilisateur
+                    // No timeout for interactive mode
                     let child = Command::new(cmd)
-                        .arg(&script_path)
+                        .arg(script_path)
                         .stdin(Stdio::inherit())
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
@@ -161,7 +200,7 @@ impl CodeExecutor {
                         Ok(mut process) => {
                             let status = process.wait()
                                 .with_context(|| format!("Failed to wait for process with {}", cmd))?;
-                            
+
                             return Ok(CodeExecutionResult {
                                 script_path: script_path.clone(),
                                 stdout: String::from("[Interactive mode - output displayed directly]"),
@@ -177,21 +216,59 @@ impl CodeExecutor {
                     }
                 }
                 ExecutionMode::Captured => {
-                    // Mode capturé: récupère stdout/stderr
-                    let output = Command::new(cmd)
-                        .arg(&script_path)
-                        .output();
+                    // Mode capturé: spawn + optional timeout
+                    let child = Command::new(cmd)
+                        .arg(script_path)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn();
 
-                    match output {
-                        Ok(out) => {
-                            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                            return Ok(CodeExecutionResult {
-                                script_path: script_path.clone(),
-                                stdout,
-                                stderr,
-                                exit_code: out.status.code(),
-                            });
+                    match child {
+                        Ok(mut process) => {
+                            if timeout_secs > 0 {
+                                let timeout = Duration::from_secs(timeout_secs);
+                                match process.wait_timeout(timeout)
+                                    .with_context(|| format!("Failed to wait for process with {}", cmd))?
+                                {
+                                    Some(status) => {
+                                        let stdout = read_pipe(process.stdout.take());
+                                        let stderr = read_pipe(process.stderr.take());
+                                        return Ok(CodeExecutionResult {
+                                            script_path: script_path.clone(),
+                                            stdout,
+                                            stderr,
+                                            exit_code: status.code(),
+                                        });
+                                    }
+                                    None => {
+                                        // Timed out — kill the process
+                                        let _ = process.kill();
+                                        let _ = process.wait();
+                                        return Ok(CodeExecutionResult {
+                                            script_path: script_path.clone(),
+                                            stdout: String::new(),
+                                            stderr: format!(
+                                                "Process timed out after {} seconds. \
+                                                 You can increase this with execution_timeout_secs in pymakebot.toml",
+                                                timeout_secs
+                                            ),
+                                            exit_code: None,
+                                        });
+                                    }
+                                }
+                            } else {
+                                // No timeout — blocking wait
+                                let output = process.wait_with_output()
+                                    .with_context(|| format!("Failed to wait for process with {}", cmd))?;
+                                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                                return Ok(CodeExecutionResult {
+                                    script_path: script_path.clone(),
+                                    stdout,
+                                    stderr,
+                                    exit_code: output.status.code(),
+                                });
+                            }
                         }
                         Err(e) => {
                             last_err = Some(anyhow::anyhow!(
@@ -209,6 +286,18 @@ impl CodeExecutor {
     }
 }
 
+/// Helper to read a piped child stdio handle into a String.
+fn read_pipe<R: std::io::Read>(pipe: Option<R>) -> String {
+    match pipe {
+        Some(mut r) => {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut r, &mut buf);
+            String::from_utf8_lossy(&buf).to_string()
+        }
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,7 +308,7 @@ mod tests {
         let temp_dir = "test_executor_temp";
         let executor = CodeExecutor::new(temp_dir);
         assert!(executor.is_ok());
-        
+
         // Clean up
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -260,17 +349,17 @@ mod tests {
     fn test_write_and_run_simple_script() {
         let executor = CodeExecutor::new("test_generated_simple").unwrap();
         let code = "print('Hello, Test!')";
-        
+
         let result = executor.write_and_run(code);
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         // Check that script was created and executed
         let script_exists = output.script_path.exists();
         // Check that either stdout or stderr is not empty (script executed)
         assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
         assert!(script_exists);
-        
+
         // Clean up
         let _ = fs::remove_dir_all("test_generated_simple");
     }
@@ -279,14 +368,14 @@ mod tests {
     fn test_write_and_run_with_calculation() {
         let executor = CodeExecutor::new("test_generated_calc").unwrap();
         let code = "result = 2 + 2\nprint(f'Result: {result}')";
-        
+
         let result = executor.write_and_run(code);
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         // Check execution happened (either output or error exists)
         assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
-        
+
         // Clean up
         let _ = fs::remove_dir_all("test_generated_calc");
     }
@@ -295,15 +384,15 @@ mod tests {
     fn test_write_and_run_error_script() {
         let executor = CodeExecutor::new("test_generated_error").unwrap();
         let code = "print(undefined_variable)";
-        
+
         let result = executor.write_and_run(code);
         assert!(result.is_ok()); // Execution succeeds even with errors
-        
+
         let output = result.unwrap();
         // Script was created
         let script_exists = output.script_path.exists();
         assert!(script_exists);
-        
+
         // Clean up
         let _ = fs::remove_dir_all("test_generated_error");
     }
@@ -353,5 +442,74 @@ mod tests {
         assert_eq!(ExecutionMode::Captured, ExecutionMode::Captured);
         assert_eq!(ExecutionMode::Interactive, ExecutionMode::Interactive);
         assert_ne!(ExecutionMode::Captured, ExecutionMode::Interactive);
+    }
+
+    #[test]
+    fn test_is_success_true() {
+        let result = CodeExecutionResult {
+            script_path: PathBuf::from("test.py"),
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        };
+        assert!(result.is_success());
+    }
+
+    #[test]
+    fn test_is_success_false_nonzero() {
+        let result = CodeExecutionResult {
+            script_path: PathBuf::from("test.py"),
+            stdout: String::new(),
+            stderr: "error".to_string(),
+            exit_code: Some(1),
+        };
+        assert!(!result.is_success());
+    }
+
+    #[test]
+    fn test_is_success_false_none() {
+        let result = CodeExecutionResult {
+            script_path: PathBuf::from("test.py"),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+        };
+        assert!(!result.is_success());
+    }
+
+    #[test]
+    fn test_write_script() {
+        let executor = CodeExecutor::new("test_write_script_dir").unwrap();
+        let path = executor.write_script("print('hi')").unwrap();
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "print('hi')");
+        let _ = fs::remove_dir_all("test_write_script_dir");
+    }
+
+    #[test]
+    fn test_syntax_check_valid() {
+        let executor = CodeExecutor::new("test_syntax_valid").unwrap();
+        let path = executor.write_script("print('hello')").unwrap();
+        assert!(executor.syntax_check(&path).is_ok());
+        let _ = fs::remove_dir_all("test_syntax_valid");
+    }
+
+    #[test]
+    fn test_syntax_check_invalid() {
+        let executor = CodeExecutor::new("test_syntax_invalid").unwrap();
+        let path = executor.write_script("def foo(\n").unwrap();
+        assert!(executor.syntax_check(&path).is_err());
+        let _ = fs::remove_dir_all("test_syntax_invalid");
+    }
+
+    #[test]
+    fn test_execution_timeout() {
+        let executor = CodeExecutor::new("test_timeout_dir").unwrap();
+        let path = executor.write_script("import time\ntime.sleep(10)").unwrap();
+        let result = executor.execute_script(&path, ExecutionMode::Captured, 2).unwrap();
+        assert!(!result.is_success());
+        assert!(result.stderr.contains("timed out"));
+        let _ = fs::remove_dir_all("test_timeout_dir");
     }
 }

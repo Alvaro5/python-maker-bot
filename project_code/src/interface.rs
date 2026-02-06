@@ -1,12 +1,13 @@
 use std::io::{self, Write};
 use std::fs;
 use crate::api::{self, Message};
+use crate::config::AppConfig;
 use crate::python_exec::{CodeExecutor, ExecutionMode};
-use crate::utils::extract_python_code;
+use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
 use colored::*;
 
-// Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue 
+// Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue
 pub fn print_banner() {
     println!("{}", "====================================".bright_cyan());
     println!("{}", "      PYTHON MAKER BOT v0.2.1       ".bright_cyan().bold());
@@ -26,13 +27,13 @@ pub fn ask_user(question: &str) -> String {
 }
 
 // Fonction utilitaire qui pose une une question oui/non en utilisant ask_user
-// Elle renvoi un booléen 
+// Elle renvoi un booléen
 pub fn confirm(question: &str) -> bool {
     let ans = ask_user(&format!("{question} (o/n) : "));
     ans.to_lowercase().starts_with('o')
 }
 
-// Fonction d'affichage pour le code python généré 
+// Fonction d'affichage pour le code python généré
 pub fn display_code(code: &str) {
     println!("\n{}", "━━━━━━━━━━━ Generated Code ━━━━━━━━━━━".bright_green().bold());
     // Simple syntax highlighting for Python
@@ -51,14 +52,27 @@ pub fn display_code(code: &str) {
     println!("{}\n", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_green());
 }
 
+/// Trim conversation history to at most `max` messages, dropping the oldest
+/// user/assistant pairs first.
+fn trim_history(history: &mut Vec<Message>, max: usize) {
+    while history.len() > max {
+        // Remove in pairs (user + assistant) from the front
+        if history.len() >= 2 {
+            history.drain(..2);
+        } else {
+            history.remove(0);
+        }
+    }
+}
+
 // Boucle interactive : affiche le bandeau de lancement
-pub async fn start_repl() {
+pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
-    let executor = CodeExecutor::new("generated").expect("Impossible de créer le dossier");
-    let logger = Logger::new("logs").expect("Failed to create logger");
+    let executor = CodeExecutor::new(&config.generated_dir).expect("Impossible de créer le dossier");
+    let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let mut metrics = SessionMetrics::new();
-    
+
     // Conversation history for multi-turn refinement
     let mut conversation_history: Vec<Message> = Vec::new();
     let mut last_generated_code = String::new();
@@ -111,7 +125,8 @@ pub async fn start_repl() {
                     };
                     println!("\n{}. [{}]", i + 1, role_color);
                     let preview = if msg.content.len() > 100 {
-                        format!("{}...", &msg.content[..100])
+                        let end = find_char_boundary(&msg.content, 100);
+                        format!("{}...", &msg.content[..end])
                     } else {
                         msg.content.clone()
                     };
@@ -127,19 +142,19 @@ pub async fn start_repl() {
                 println!("{}", "No code to save. Generate some code first!".yellow());
                 continue;
             }
-            
+
             let parts: Vec<&str> = prompt.split_whitespace().collect();
             let filename = if parts.len() > 1 {
                 parts[1].to_string()
             } else {
                 ask_user("Enter filename (e.g., script.py): ")
             };
-            
+
             if filename.is_empty() {
                 println!("{}", "Save cancelled.".yellow());
                 continue;
             }
-            
+
             match fs::write(&filename, &last_generated_code) {
                 Ok(_) => println!("{} {}", "✓ Code saved to:".green(), filename.bright_white()),
                 Err(e) => println!("{} {}", "✗ Failed to save file:".red(), e),
@@ -148,13 +163,13 @@ pub async fn start_repl() {
         }
 
         if prompt == "/list" {
-            match fs::read_dir("generated") {
+            match fs::read_dir(&config.generated_dir) {
                 Ok(entries) => {
                     let mut scripts: Vec<_> = entries
                         .filter_map(|e| e.ok())
-                        .filter(|e| e.path().extension().map_or(false, |ext| ext == "py"))
+                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "py"))
                         .collect();
-                    
+
                     if scripts.is_empty() {
                         println!("{}", "No generated scripts found.".yellow());
                     } else {
@@ -178,29 +193,29 @@ pub async fn start_repl() {
             } else {
                 ask_user("Enter script filename (e.g., script_20251209_152023.py): ")
             };
-            
+
             if filename.is_empty() {
                 println!("{}", "Run cancelled.".yellow());
                 continue;
             }
-            
-            let script_path = if filename.starts_with("generated/") {
+
+            let script_path = if filename.starts_with(&format!("{}/", config.generated_dir)) {
                 filename
             } else {
-                format!("generated/{}", filename)
+                format!("{}/{}", config.generated_dir, filename)
             };
-            
+
             match fs::read_to_string(&script_path) {
                 Ok(code) => {
                     println!("\n{}", format!("Running: {}", script_path).bright_cyan());
-                    
+
                     // Check for dependencies
                     let deps = executor.detect_dependencies(&code);
                     if !deps.is_empty() {
-                        println!("\n{} {}", 
+                        println!("\n{} {}",
                             "⚠️  Detected non-standard dependencies:".yellow(),
                             deps.join(", ").bright_yellow());
-                        if confirm("Install these dependencies?") {
+                        if config.auto_install_deps || confirm("Install these dependencies?") {
                             if let Err(e) = executor.install_packages(&deps) {
                                 println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
                                 println!("{}", "Proceeding anyway...".dimmed());
@@ -217,18 +232,17 @@ pub async fn start_repl() {
                         ExecutionMode::Captured
                     };
 
-                    match executor.run_existing_script(&script_path, mode) {
+                    match executor.run_existing_script(&script_path, mode, config.execution_timeout_secs) {
                         Ok(result) => {
-                            let success = result.exit_code.unwrap_or(1) == 0 
-                                || (result.stderr.is_empty() || !result.stderr.contains("Error"));
+                            let success = result.is_success();
                             if success {
                                 metrics.successful_executions += 1;
                             } else {
                                 metrics.failed_executions += 1;
                             }
-                            
+
                             let _ = logger.log_execution(success, &result.stdout);
-                            
+
                             println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
                             if !result.stdout.is_empty() {
                                 println!("\n{}:", "STDOUT".green().bold());
@@ -262,11 +276,11 @@ pub async fn start_repl() {
             let mut refinement = String::new();
             io::stdin().read_line(&mut refinement).unwrap();
             let refinement = refinement.trim();
-            
+
             if refinement.is_empty() {
                 continue;
             }
-            
+
             // Add refinement request to history
             conversation_history.push(Message {
                 role: "user".to_string(),
@@ -285,31 +299,99 @@ pub async fn start_repl() {
         metrics.total_requests += 1;
 
         // Call Hugging Face with conversation history
-        match api::generate_code_with_history(conversation_history.clone()).await {
+        match api::generate_code_with_history(conversation_history.clone(), config).await {
             Ok(raw_response) => {
                 // Log the response
                 let _ = logger.log_api_response(&raw_response);
-                
+
                 // Extract clean Python code from the response
                 let code = extract_python_code(&raw_response);
                 last_generated_code = code.clone();
-                
+
                 // Add assistant response to history
                 conversation_history.push(Message {
                     role: "assistant".to_string(),
                     content: code.clone(),
                 });
-                
+
+                // Trim history to configured limit
+                trim_history(&mut conversation_history, config.max_history_messages);
+
                 display_code(&code);
+
+                // Write the script first, then syntax-check before executing
+                let script_path = match executor.write_script(&code) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        println!("{} {}", "✗ Failed to write script:".red(), e);
+                        continue;
+                    }
+                };
+
+                // Syntax check
+                if let Err(syntax_err) = executor.syntax_check(&script_path) {
+                    println!("\n{} {}", "✗ Syntax error detected:".red().bold(), syntax_err);
+                    if confirm("Auto-refine to fix this error?") {
+                        // Add syntax error to conversation history for auto-refine
+                        conversation_history.push(Message {
+                            role: "user".to_string(),
+                            content: format!(
+                                "The code has a syntax error. Please fix it:\n{}",
+                                syntax_err
+                            ),
+                        });
+                        // Skip execution, let the loop iterate to call the API again
+                        // by falling through (we already pushed the user message)
+                        metrics.total_requests += 1;
+                        let _ = logger.log_api_request(&format!("Auto-refine syntax: {}", syntax_err));
+
+                        match api::generate_code_with_history(conversation_history.clone(), config).await {
+                            Ok(raw_response) => {
+                                let _ = logger.log_api_response(&raw_response);
+                                let fixed_code = extract_python_code(&raw_response);
+                                last_generated_code = fixed_code.clone();
+
+                                conversation_history.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: fixed_code.clone(),
+                                });
+                                trim_history(&mut conversation_history, config.max_history_messages);
+
+                                display_code(&fixed_code);
+
+                                // Overwrite the script with the fixed code
+                                if let Err(e) = fs::write(&script_path, &fixed_code) {
+                                    println!("{} {}", "✗ Failed to write fixed script:".red(), e);
+                                    continue;
+                                }
+
+                                // Re-check syntax
+                                if let Err(err2) = executor.syntax_check(&script_path) {
+                                    println!("{} {}", "✗ Still has syntax errors:".red(), err2);
+                                    continue;
+                                }
+                            }
+                            Err(e) => {
+                                metrics.api_errors += 1;
+                                let _ = logger.log_error(&format!("API error during auto-refine: {}", e));
+                                println!("{} {}", "✗ API error during auto-refine:".red(), e);
+                                conversation_history.pop();
+                                continue;
+                            }
+                        }
+                    } else {
+                        continue;
+                    }
+                }
 
                 if confirm("Execute this script?") {
                     // Check for dependencies
-                    let deps = executor.detect_dependencies(&code);
+                    let deps = executor.detect_dependencies(&last_generated_code);
                     if !deps.is_empty() {
-                        println!("\n{} {}", 
+                        println!("\n{} {}",
                             "⚠️  Detected non-standard dependencies:".yellow(),
                             deps.join(", ").bright_yellow());
-                        if confirm("Install these dependencies?") {
+                        if config.auto_install_deps || confirm("Install these dependencies?") {
                             if let Err(e) = executor.install_packages(&deps) {
                                 println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
                                 println!("{}", "Proceeding anyway...".dimmed());
@@ -318,7 +400,7 @@ pub async fn start_repl() {
                     }
 
                     // Detect if interactive mode is needed
-                    let mode = if executor.needs_interactive_mode(&code) {
+                    let mode = if executor.needs_interactive_mode(&last_generated_code) {
                         println!("{}", "🎮 Interactive mode detected (pygame/input/GUI)".bright_magenta().bold());
                         println!("{}", "   Running with inherited stdio for user interaction...".dimmed());
                         ExecutionMode::Interactive
@@ -326,20 +408,19 @@ pub async fn start_repl() {
                         ExecutionMode::Captured
                     };
 
-                    match executor.write_and_run_with_mode(&code, mode) {
+                    match executor.execute_script(&script_path, mode, config.execution_timeout_secs) {
                         Ok(result) => {
-                            let success = result.exit_code.unwrap_or(1) == 0 
-                                || (result.stderr.is_empty() || !result.stderr.contains("Error"));
+                            let success = result.is_success();
                             if success {
                                 metrics.successful_executions += 1;
                             } else {
                                 metrics.failed_executions += 1;
                             }
-                            
+
                             let _ = logger.log_execution(success, &result.stdout);
-                            
+
                             println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
-                            println!("{} {:?}", "Script saved at:".dimmed(), result.script_path);
+                            println!("{} {:?}", "Script saved at:".dimmed(), script_path);
                             if !result.stdout.is_empty() {
                                 println!("\n{}:", "STDOUT".green().bold());
                                 println!("{}", result.stdout);
@@ -367,7 +448,7 @@ pub async fn start_repl() {
             }
         }
     }
-    
+
     // Display session statistics on exit
     println!("\n{}", "Session ended.".bright_cyan());
     metrics.display();

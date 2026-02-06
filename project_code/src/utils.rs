@@ -2,6 +2,17 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+// Cached regexes — compiled once, reused across all calls
+static CODE_BLOCK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"```\s*(?:python)?\s*([\s\S]*?)\s*```").unwrap());
+static INCOMPLETE_BLOCK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"```\s*(?:python)?\s*\n([\s\S]*)$").unwrap());
+static IMPORT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^import\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap());
+static FROM_IMPORT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^from\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+import").unwrap());
 
 pub fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -11,14 +22,24 @@ pub fn ensure_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Find the largest char boundary in `s` that is <= `max_bytes`.
+/// Safe for slicing: `&s[..find_char_boundary(s, max_bytes)]` never panics.
+pub fn find_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
+}
+
 /// Extract Python code from a response that might contain markdown code blocks
 pub fn extract_python_code(response: &str) -> String {
-    // Try to match complete markdown code blocks first
-    let code_block_re = Regex::new(r"```\s*(?:python)?\s*([\s\S]*?)\s*```").unwrap();
-    
     // Find all complete code blocks and concatenate them
     let mut all_code = String::new();
-    for capture in code_block_re.captures_iter(response) {
+    for capture in CODE_BLOCK_RE.captures_iter(response) {
         if let Some(code) = capture.get(1) {
             let code_str = code.as_str().trim();
             if !code_str.is_empty() && !is_just_markdown_text(code_str) {
@@ -29,15 +50,14 @@ pub fn extract_python_code(response: &str) -> String {
             }
         }
     }
-    
+
     if !all_code.is_empty() {
         return all_code;
     }
-    
+
     // If no complete blocks, try to extract from incomplete/truncated response
     // Pattern: ```python\n...code... (no closing backticks)
-    let incomplete_block_re = Regex::new(r"```\s*(?:python)?\s*\n([\s\S]*)$").unwrap();
-    if let Some(capture) = incomplete_block_re.captures(response) {
+    if let Some(capture) = INCOMPLETE_BLOCK_RE.captures(response) {
         if let Some(code) = capture.get(1) {
             let code_str = code.as_str().trim();
             if !code_str.is_empty() && !is_just_markdown_text(code_str) {
@@ -45,15 +65,15 @@ pub fn extract_python_code(response: &str) -> String {
             }
         }
     }
-    
+
     // If no markdown block found, clean up markdown artifacts and return
     let cleaned = clean_markdown_artifacts(response.trim());
-    
+
     // If the result is mostly markdown text, return a helpful comment
     if is_just_markdown_text(&cleaned) {
         return "# No Python code was generated.\n# Please try rephrasing your request or use /refine to ask for actual code.".to_string();
     }
-    
+
     cleaned
 }
 
@@ -63,35 +83,37 @@ fn is_just_markdown_text(text: &str) -> bool {
     if lines.is_empty() {
         return true;
     }
-    
+
     // Count lines that look like code vs markdown text
     let mut code_lines = 0;
     let mut text_lines = 0;
-    
+
     for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        
-        // Markdown indicators
-        if trimmed.starts_with("###") || 
-           trimmed.starts_with("##") || 
-           trimmed.starts_with("#") && !trimmed.contains("=") && !trimmed.contains("import") ||
-           trimmed.starts_with("Here is") ||
-           trimmed.starts_with("Step ") ||
-           trimmed.starts_with("The ") ||
-           trimmed.contains("code for") {
+
+        // Markdown indicators (explicit parentheses for clarity)
+        if trimmed.starts_with("###")
+           || trimmed.starts_with("##")
+           || (trimmed.starts_with("#") && !trimmed.contains("=") && !trimmed.contains("import"))
+           || trimmed.starts_with("Here is")
+           || trimmed.starts_with("Step ")
+           || trimmed.starts_with("The ")
+           || trimmed.contains("code for")
+        {
             text_lines += 1;
-        } else if trimmed.contains("def ") || 
-                  trimmed.contains("class ") || 
-                  trimmed.contains("import ") || 
-                  trimmed.contains("=") || 
-                  trimmed.contains("(") && trimmed.contains(")") {
+        } else if trimmed.contains("def ")
+                  || trimmed.contains("class ")
+                  || trimmed.contains("import ")
+                  || trimmed.contains("=")
+                  || (trimmed.contains("(") && trimmed.contains(")"))
+        {
             code_lines += 1;
         }
     }
-    
+
     // If mostly text or no code at all, it's just markdown
     text_lines > code_lines || code_lines == 0
 }
@@ -99,22 +121,22 @@ fn is_just_markdown_text(text: &str) -> bool {
 /// Remove common markdown artifacts from text
 fn clean_markdown_artifacts(text: &str) -> String {
     let mut result = String::new();
-    
+
     for line in text.lines() {
         let trimmed = line.trim();
-        
+
         // Skip obvious markdown headings and explanations
-        if trimmed.starts_with("###") || 
+        if trimmed.starts_with("###") ||
            trimmed.starts_with("##") ||
            (trimmed.starts_with("Here is") && trimmed.contains(":")) ||
            (trimmed.starts_with("Step ") && trimmed.contains(":")) {
             continue;
         }
-        
+
         result.push_str(line);
         result.push('\n');
     }
-    
+
     result.trim().to_string()
 }
 
@@ -122,29 +144,23 @@ fn clean_markdown_artifacts(text: &str) -> String {
 /// Returns a list of package names (without submodules)
 pub fn extract_imports(code: &str) -> Vec<String> {
     let mut imports = Vec::new();
-    
-    // Match "import package" or "import package.submodule"
-    let import_re = Regex::new(r"^import\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
-    
-    // Match "from package import ..."
-    let from_import_re = Regex::new(r"^from\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+import").unwrap();
-    
+
     for line in code.lines() {
         let trimmed = line.trim();
-        
-        if let Some(caps) = import_re.captures(trimmed) {
+
+        if let Some(caps) = IMPORT_RE.captures(trimmed) {
             if let Some(pkg) = caps.get(1) {
                 imports.push(pkg.as_str().to_string());
             }
         }
-        
-        if let Some(caps) = from_import_re.captures(trimmed) {
+
+        if let Some(caps) = FROM_IMPORT_RE.captures(trimmed) {
             if let Some(pkg) = caps.get(1) {
                 imports.push(pkg.as_str().to_string());
             }
         }
     }
-    
+
     // Remove duplicates
     imports.sort();
     imports.dedup();
@@ -182,7 +198,7 @@ pub fn is_stdlib(package: &str) -> bool {
         "winreg", "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport",
         "zlib", "_thread",
     ];
-    
+
     STDLIB_MODULES.contains(&package)
 }
 
@@ -245,7 +261,7 @@ mod tests {
     fn test_is_just_markdown_text() {
         let markdown = "### Step 1\nHere is the code:";
         assert!(is_just_markdown_text(markdown));
-        
+
         let code = "import pygame\npygame.init()";
         assert!(!is_just_markdown_text(code));
     }
@@ -307,15 +323,15 @@ mod tests {
     fn test_ensure_dir_creates_new() {
         use std::path::PathBuf;
         let temp_dir = PathBuf::from("test_temp_dir_unique_12345");
-        
+
         // Clean up if exists
         let _ = fs::remove_dir_all(&temp_dir);
-        
+
         // Test creation
         let result = ensure_dir(&temp_dir);
         assert!(result.is_ok());
         assert!(temp_dir.exists());
-        
+
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -324,16 +340,40 @@ mod tests {
     fn test_ensure_dir_existing() {
         use std::path::PathBuf;
         let temp_dir = PathBuf::from("test_temp_dir_existing_12345");
-        
+
         // Create directory first
         let _ = fs::create_dir_all(&temp_dir);
-        
+
         // Test with existing directory
         let result = ensure_dir(&temp_dir);
         assert!(result.is_ok());
         assert!(temp_dir.exists());
-        
+
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_find_char_boundary_ascii() {
+        let s = "Hello, world!";
+        assert_eq!(find_char_boundary(s, 5), 5);
+        assert_eq!(find_char_boundary(s, 100), s.len());
+        assert_eq!(find_char_boundary(s, 0), 0);
+    }
+
+    #[test]
+    fn test_find_char_boundary_multibyte() {
+        let s = "Héllo wörld"; // é is 2 bytes, ö is 2 bytes
+        // 'H' = 1 byte, 'é' = 2 bytes (bytes 1..3)
+        assert_eq!(find_char_boundary(s, 2), 1); // mid-'é', snaps back to 1
+        assert_eq!(find_char_boundary(s, 3), 3); // after 'é'
+    }
+
+    #[test]
+    fn test_find_char_boundary_emoji() {
+        let s = "Hi 👋 there";
+        // 'H'=0, 'i'=1, ' '=2, '👋'=3..7
+        assert_eq!(find_char_boundary(s, 4), 3); // mid-emoji, snaps back
+        assert_eq!(find_char_boundary(s, 7), 7); // after emoji
     }
 }

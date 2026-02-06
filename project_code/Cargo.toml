@@ -16,6 +16,9 @@ chrono = "0.4"
 rand = "0.8"
 regex = "1.10"
 colored = "2.1"
+toml = "0.8"
+dirs = "5.0"
+wait-timeout = "0.2"
 
 [dev-dependencies]
 mockito = "1.5"
