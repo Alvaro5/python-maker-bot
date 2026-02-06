@@ -52,11 +52,11 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 1. **Clone the repository**:
 ```bash
 git clone https://github.com/Ali-Gatorre/Rust_project.git
-cd Rust_project/project_code
+cd Rust_project
 ```
 
 2. **Set up HuggingFace Token**:
-Create a `.env` file in the `project_code` directory:
+Create a `.env` file in the repository root:
 ```bash
 echo "HF_TOKEN=your_huggingface_token_here" > .env
 ```
@@ -71,7 +71,6 @@ cargo run
 
 4. **(Optional) Build the Docker sandbox image**:
 ```bash
-cd ..  # back to repo root
 docker build -t python-sandbox .
 ```
 Then enable it in `pymakebot.toml`:
@@ -163,7 +162,7 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 ### Project Structure
 
 ```
-project_code/
+.
 ├── src/
 │   ├── main.rs          # Entry point; loads .env and config
 │   ├── config.rs        # AppConfig with TOML deserialization

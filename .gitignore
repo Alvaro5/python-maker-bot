@@ -1,6 +1,3 @@
-# Ignore environment files with secrets
-.env
-
 # Rust build artifacts
 target/
 # Rust/Cargo
@@ -9,7 +6,6 @@ target/
 **/*.rmeta
 **/*.rlib
 **/*.dSYM
-Cargo.lock
 
 # Build artifacts (when building/publishing with cargo)
 *.crate
@@ -54,6 +50,9 @@ tmp/
 out/
 
 # Python Maker Bot specific
-project_code/generated/
-project_code/logs/
+generated/
+logs/
 *.py
+
+
+.github
