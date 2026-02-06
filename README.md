@@ -287,6 +287,40 @@ Contributions are welcome! Areas for improvement:
 
 ---
 
+## 📦 Library Usage
+
+You can use this project as a library from other Rust projects. The crate exposes a `run()` entrypoint and re-exports `AppConfig` and `CodeExecutor` for convenience.
+
+Example (simple `main.rs` using the library entrypoint):
+
+```rust
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+  // Start the REPL from the library
+  python_maker_bot::run().await
+}
+```
+
+Example (programmatic usage of `CodeExecutor`):
+
+```rust
+use python_maker_bot::{AppConfig, CodeExecutor, ExecutionMode};
+
+fn main() -> anyhow::Result<()> {
+  let cfg = AppConfig::load();
+  let executor = CodeExecutor::new(&cfg.generated_dir, cfg.use_docker, &cfg.python_executable)?;
+
+  // Write and run a script (synchronous API available in the lib)
+  let result = executor.write_and_run_with_mode("print(\"hi\")", ExecutionMode::Captured)?;
+  println!("stdout: {}", result.stdout);
+
+  Ok(())
+}
+```
+
+
 ## 📚 Documentation
 
 Complete guides available:
