@@ -420,7 +420,7 @@ pub async fn start_repl(config: &AppConfig) {
                             let _ = logger.log_execution(success, &result.stdout);
 
                             println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
-                            println!("{} {:?}", "Script saved at:".dimmed(), script_path);
+                            println!("{} {:?}", "Script saved at:".dimmed(), result.script_path);
                             if !result.stdout.is_empty() {
                                 println!("\n{}:", "STDOUT".green().bold());
                                 println!("{}", result.stdout);
