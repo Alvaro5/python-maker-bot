@@ -430,6 +430,79 @@ pub async fn start_repl(config: &AppConfig) {
                                 println!("{}", result.stderr);
                             }
                             println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue());
+
+                            // Offer auto-refine on runtime errors
+                            if !success && !result.stderr.is_empty()
+                                && confirm("Auto-refine to fix this runtime error?")
+                            {
+                                conversation_history.push(Message {
+                                    role: "user".to_string(),
+                                    content: format!(
+                                        "The code crashed with this runtime error. Please fix it:\n{}",
+                                        result.stderr
+                                    ),
+                                });
+                                metrics.total_requests += 1;
+                                let _ = logger.log_api_request(&format!("Auto-refine runtime: {}", result.stderr));
+
+                                match api::generate_code_with_history(conversation_history.clone(), config).await {
+                                    Ok(raw_response) => {
+                                        let _ = logger.log_api_response(&raw_response);
+                                        let fixed_code = extract_python_code(&raw_response);
+                                        last_generated_code = fixed_code.clone();
+
+                                        conversation_history.push(Message {
+                                            role: "assistant".to_string(),
+                                            content: fixed_code.clone(),
+                                        });
+                                        trim_history(&mut conversation_history, config.max_history_messages);
+
+                                        display_code(&fixed_code);
+
+                                        // Overwrite the script with the fixed code
+                                        if let Err(e) = fs::write(&script_path, &fixed_code) {
+                                            println!("{} {}", "✗ Failed to write fixed script:".red(), e);
+                                        } else if let Err(syn_err) = executor.syntax_check(&script_path) {
+                                            println!("{} {}", "✗ Fixed code has syntax errors:".red(), syn_err);
+                                        } else if confirm("Execute the fixed script?") {
+                                            match executor.execute_script(&script_path, mode, config.execution_timeout_secs) {
+                                                Ok(retry_result) => {
+                                                    let retry_success = retry_result.is_success();
+                                                    if retry_success {
+                                                        metrics.successful_executions += 1;
+                                                    } else {
+                                                        metrics.failed_executions += 1;
+                                                    }
+                                                    let _ = logger.log_execution(retry_success, &retry_result.stdout);
+
+                                                    println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
+                                                    println!("{} {:?}", "Script saved at:".dimmed(), retry_result.script_path);
+                                                    if !retry_result.stdout.is_empty() {
+                                                        println!("\n{}:", "STDOUT".green().bold());
+                                                        println!("{}", retry_result.stdout);
+                                                    }
+                                                    if !retry_result.stderr.is_empty() {
+                                                        println!("\n{}:", "STDERR".red().bold());
+                                                        println!("{}", retry_result.stderr);
+                                                    }
+                                                    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue());
+                                                }
+                                                Err(e) => {
+                                                    metrics.failed_executions += 1;
+                                                    let _ = logger.log_error(&format!("Execution error: {}", e));
+                                                    println!("{} {}", "✗ Execution error:".red(), e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        metrics.api_errors += 1;
+                                        let _ = logger.log_error(&format!("API error during auto-refine: {}", e));
+                                        println!("{} {}", "✗ API error during auto-refine:".red(), e);
+                                        conversation_history.pop();
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             metrics.failed_executions += 1;
