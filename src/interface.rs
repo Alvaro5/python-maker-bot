@@ -160,7 +160,7 @@ fn stop_spinner(handle: &Arc<AtomicBool>) {
 pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
-    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker).expect("Failed to create generated scripts directory");
+    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker, &config.python_executable).expect("Failed to create generated scripts directory");
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let metrics = SessionMetrics::new();
 
@@ -174,7 +174,7 @@ pub async fn start_repl(config: &AppConfig) {
                 println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
                 // Recreate executor without Docker
                 // (we can't mutate executor, so shadow it)
-                let executor = CodeExecutor::new(&config.generated_dir, false).expect("Failed to create generated scripts directory");
+                let executor = CodeExecutor::new(&config.generated_dir, false, &config.python_executable).expect("Failed to create generated scripts directory");
                 return start_repl_loop(config, executor, logger, metrics).await;
             }
         }

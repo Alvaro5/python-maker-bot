@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub use_docker: bool,
     pub log_dir: String,
     pub generated_dir: String,
+    pub python_executable: String,
 }
 
 impl Default for AppConfig {
@@ -33,6 +34,7 @@ impl Default for AppConfig {
             use_docker: false,
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
+            python_executable: "python3".to_string(),
         }
     }
 }
@@ -79,6 +81,7 @@ mod tests {
         assert_eq!(cfg.max_retries, 3);
         assert!(!cfg.use_docker);
         assert_eq!(cfg.log_dir, "logs");
+        assert_eq!(cfg.python_executable, "python3");
         assert_eq!(cfg.generated_dir, "generated");
     }
 
@@ -110,6 +113,7 @@ mod tests {
             use_docker = true
             log_dir = "my_logs"
             generated_dir = "my_scripts"
+            python_executable = "python"
         "#;
         let cfg: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.model, "test-model");

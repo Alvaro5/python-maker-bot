@@ -38,6 +38,7 @@ impl CodeExecutionResult {
 pub struct CodeExecutor {
     base_dir: PathBuf,
     use_docker: bool,
+    python_executable: String,
 }
 
 impl CodeExecutor {
@@ -45,10 +46,10 @@ impl CodeExecutor {
     ///
     /// `base_dir`: directory where generated scripts are stored.
     /// `use_docker`: if true, scripts run inside the `python-sandbox` Docker container.
-    pub fn new(base_dir: &str, use_docker: bool) -> Result<Self> {
+    pub fn new(base_dir: &str, use_docker: bool, python_executable: &str) -> Result<Self> {
         let dir = PathBuf::from(base_dir);
         ensure_dir(&dir)?;
-        Ok(Self { base_dir: dir, use_docker })
+        Ok(Self { base_dir: dir, use_docker, python_executable: python_executable.to_string() })
     }
 
     /// Check whether Docker is available and the sandbox image exists.
@@ -111,7 +112,8 @@ impl CodeExecutor {
 
     /// Install packages on the host via pip.
     fn install_packages_host(&self, packages: &[String]) -> Result<()> {
-        let python_cmds = ["python3", "python"];
+        let primary = self.python_executable.as_str();
+        let python_cmds = [primary, "python"];
         let mut last_err: Option<anyhow::Error> = None;
 
         for cmd in python_cmds {
@@ -232,7 +234,8 @@ impl CodeExecutor {
     /// Run `python3 -m py_compile <path>` and return Ok(()) on success or
     /// Err(message) with the compiler output on failure.
     pub fn syntax_check(&self, path: &PathBuf) -> Result<(), String> {
-        let python_cmds = ["python3", "python"];
+        let primary = self.python_executable.as_str();
+        let python_cmds = [primary, "python"];
         for cmd in python_cmds {
             let output = Command::new(cmd)
                 .args(["-m", "py_compile"])
@@ -414,7 +417,8 @@ impl CodeExecutor {
         mode: ExecutionMode,
         timeout_secs: u64,
     ) -> Result<CodeExecutionResult> {
-        let python_cmds = ["python3", "python"];
+        let primary = self.python_executable.as_str();
+        let python_cmds = [primary, "python"];
         let mut last_err: Option<anyhow::Error> = None;
 
         for cmd in python_cmds {
@@ -536,13 +540,13 @@ mod tests {
 
     /// Helper: create an executor with Docker disabled (host mode).
     fn host_executor(dir: &str) -> CodeExecutor {
-        CodeExecutor::new(dir, false).unwrap()
+        CodeExecutor::new(dir, false, "python3").unwrap()
     }
 
     #[test]
     fn test_executor_creation() {
         let temp_dir = "test_executor_temp";
-        let executor = CodeExecutor::new(temp_dir, false);
+        let executor = CodeExecutor::new(temp_dir, false, "python3");
         assert!(executor.is_ok());
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -550,7 +554,7 @@ mod tests {
     #[test]
     fn test_executor_creation_docker_flag() {
         let temp_dir = "test_executor_docker_flag";
-        let executor = CodeExecutor::new(temp_dir, true).unwrap();
+        let executor = CodeExecutor::new(temp_dir, true, "python3").unwrap();
         assert!(executor.use_docker);
         let _ = fs::remove_dir_all(temp_dir);
     }

@@ -317,8 +317,8 @@ MIT License - see LICENSE file for details
 
 ## 📞 Contact
 
-- **GitHub**: [Ali-Gatorre](https://github.com/Ali-Gatorre)
-- **Project**: [Rust_project](https://github.com/Ali-Gatorre/Rust_project)
+ - **GitHub**: [Alvaro5](https://github.com/Alvaro5)
+- **Project**: [python-maker-bot](https://github.com/Alvaro5/python-maker-bot)
 
 ---
 
