@@ -19,6 +19,7 @@ colored = "2.1"
 toml = "0.8"
 dirs = "5.0"
 wait-timeout = "0.2"
+rustyline = { version = "15", features = ["derive"] }
 
 [dev-dependencies]
 mockito = "1.5"

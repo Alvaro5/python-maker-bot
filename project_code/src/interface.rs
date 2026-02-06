@@ -1,11 +1,72 @@
 use std::io::{self, Write};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use crate::api::{self, Message};
 use crate::config::AppConfig;
 use crate::python_exec::{CodeExecutor, ExecutionMode};
 use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
 use colored::*;
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::hint::Hinter;
+use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Validator};
+
+/// Available slash commands for tab-completion.
+const COMMANDS: &[&str] = &[
+    "/help", "/quit", "/exit", "/clear", "/refine",
+    "/save", "/history", "/stats", "/list", "/run",
+];
+
+/// Rustyline helper providing slash-command tab-completion and inline hints.
+#[derive(Helper, Validator, Highlighter)]
+struct CommandCompleter;
+
+impl Hinter for CommandCompleter {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<String> {
+        // Only hint when cursor is at end and line starts with '/'
+        if pos != line.len() || !line.starts_with('/') || line.contains(' ') {
+            return None;
+        }
+
+        // Find the first command that matches and return the remaining suffix as hint
+        COMMANDS
+            .iter()
+            .find(|cmd| cmd.starts_with(line) && **cmd != line)
+            .map(|cmd| cmd[line.len()..].to_string())
+    }
+}
+
+impl Completer for CommandCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Only complete when the cursor is at the first word and it starts with '/'
+        let prefix = &line[..pos];
+        if !prefix.starts_with('/') || prefix.contains(' ') {
+            return Ok((0, vec![]));
+        }
+
+        let matches: Vec<Pair> = COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(prefix))
+            .map(|cmd| Pair {
+                display: cmd.to_string(),
+                replacement: cmd.to_string(),
+            })
+            .collect();
+
+        Ok((0, matches))
+    }
+}
 
 // Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue
 pub fn print_banner() {
@@ -16,7 +77,7 @@ pub fn print_banner() {
     println!("{}\n", " Type /help for commands or /quit to exit".dimmed());
 }
 
-// Fonction utilitaire pour poser des question à l'utilisateur et récupérer la réponse
+// Utility function to ask the user a question and return their answer
 pub fn ask_user(question: &str) -> String {
     print!("{question}");
     io::stdout().flush().unwrap();
@@ -26,14 +87,13 @@ pub fn ask_user(question: &str) -> String {
     input.trim().to_string()
 }
 
-// Fonction utilitaire qui pose une une question oui/non en utilisant ask_user
-// Elle renvoi un booléen
+// Utility function that asks a yes/no question using ask_user
 pub fn confirm(question: &str) -> bool {
-    let ans = ask_user(&format!("{question} (o/n) : "));
-    ans.to_lowercase().starts_with('o')
+    let ans = ask_user(&format!("{question} (y/n) : "));
+    ans.to_lowercase().starts_with('y')
 }
 
-// Fonction d'affichage pour le code python généré
+// Display function for generated Python code
 pub fn display_code(code: &str) {
     println!("\n{}", "━━━━━━━━━━━ Generated Code ━━━━━━━━━━━".bright_green().bold());
     // Simple syntax highlighting for Python
@@ -65,20 +125,100 @@ fn trim_history(history: &mut Vec<Message>, max: usize) {
     }
 }
 
-// Boucle interactive : affiche le bandeau de lancement
+/// Start a spinner animation in a background thread.
+/// Returns an `Arc<AtomicBool>` — set it to `false` to stop the spinner.
+fn start_spinner(message: &str) -> Arc<AtomicBool> {
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+    let msg = message.to_string();
+
+    std::thread::spawn(move || {
+        let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let mut i = 0;
+        while running_clone.load(Ordering::Relaxed) {
+            print!("\r{} {} ", frames[i % frames.len()].to_string().cyan(), msg.dimmed());
+            let _ = io::stdout().flush();
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            i += 1;
+        }
+        // Clear the spinner line
+        print!("\r{}\r", " ".repeat(msg.len() + 4));
+        let _ = io::stdout().flush();
+    });
+
+    running
+}
+
+/// Stop a running spinner.
+fn stop_spinner(handle: &Arc<AtomicBool>) {
+    handle.store(false, Ordering::Relaxed);
+    // Give the spinner thread time to clear the line
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
+// Interactive REPL entry point
 pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
-    let executor = CodeExecutor::new(&config.generated_dir).expect("Impossible de créer le dossier");
+    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker).expect("Failed to create generated scripts directory");
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
-    let mut metrics = SessionMetrics::new();
+    let metrics = SessionMetrics::new();
+
+    // If Docker mode is enabled, verify Docker is available
+    if config.use_docker {
+        match CodeExecutor::check_docker_available() {
+            Ok(()) => println!("{}", "✓ Docker sandbox mode enabled.".green()),
+            Err(e) => {
+                println!("{} {}", "✗ Docker sandbox not available:".red().bold(), e);
+                println!("{}", "  Falling back to host execution.".yellow());
+                println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
+                // Recreate executor without Docker
+                // (we can't mutate executor, so shadow it)
+                let executor = CodeExecutor::new(&config.generated_dir, false).expect("Failed to create generated scripts directory");
+                return start_repl_loop(config, executor, logger, metrics).await;
+            }
+        }
+    }
+
+    start_repl_loop(config, executor, logger, metrics).await;
+}
+
+async fn start_repl_loop(
+    config: &AppConfig,
+    executor: CodeExecutor,
+    logger: Logger,
+    mut metrics: SessionMetrics,
+) {
+    // Set up rustyline editor with tab-completion
+    let rl_config = Config::builder()
+        .auto_add_history(true)
+        .completion_type(CompletionType::List)
+        .completion_prompt_limit(100)
+        .build();
+    let mut rl = Editor::with_config(rl_config).expect("Failed to create line editor");
+    rl.set_helper(Some(CommandCompleter));
 
     // Conversation history for multi-turn refinement
     let mut conversation_history: Vec<Message> = Vec::new();
     let mut last_generated_code = String::new();
 
     loop {
-        let prompt = ask_user("> ");
+        let readline = rl.readline(&"> ".bright_cyan().bold().to_string());
+        let prompt = match readline {
+            Ok(line) => line.trim().to_string(),
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
+                println!("Goodbye!");
+                break;
+            }
+            Err(e) => {
+                println!("{} {}", "✗ Input error:".red(), e);
+                continue;
+            }
+        };
+
+        if prompt.is_empty() {
+            continue;
+        }
 
         if prompt == "/quit" || prompt == "/exit" {
             println!("Goodbye!");
@@ -299,7 +439,11 @@ pub async fn start_repl(config: &AppConfig) {
         metrics.total_requests += 1;
 
         // Call Hugging Face with conversation history
-        match api::generate_code_with_history(conversation_history.clone(), config).await {
+        let spinner = start_spinner("Generating code...");
+        let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+        stop_spinner(&spinner);
+
+        match api_result {
             Ok(raw_response) => {
                 // Log the response
                 let _ = logger.log_api_response(&raw_response);
@@ -345,7 +489,11 @@ pub async fn start_repl(config: &AppConfig) {
                         metrics.total_requests += 1;
                         let _ = logger.log_api_request(&format!("Auto-refine syntax: {}", syntax_err));
 
-                        match api::generate_code_with_history(conversation_history.clone(), config).await {
+                        let spinner = start_spinner("Auto-refining code...");
+                        let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                        stop_spinner(&spinner);
+
+                        match api_result {
                             Ok(raw_response) => {
                                 let _ = logger.log_api_response(&raw_response);
                                 let fixed_code = extract_python_code(&raw_response);
@@ -445,7 +593,11 @@ pub async fn start_repl(config: &AppConfig) {
                                 metrics.total_requests += 1;
                                 let _ = logger.log_api_request(&format!("Auto-refine runtime: {}", result.stderr));
 
-                                match api::generate_code_with_history(conversation_history.clone(), config).await {
+                                let spinner = start_spinner("Auto-refining code...");
+                                let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                                stop_spinner(&spinner);
+
+                                match api_result {
                                     Ok(raw_response) => {
                                         let _ = logger.log_api_response(&raw_response);
                                         let fixed_code = extract_python_code(&raw_response);
@@ -526,3 +678,4 @@ pub async fn start_repl(config: &AppConfig) {
     println!("\n{}", "Session ended.".bright_cyan());
     metrics.display();
 }
+

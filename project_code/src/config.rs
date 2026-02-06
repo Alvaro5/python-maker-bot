@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub auto_install_deps: bool,
     pub max_history_messages: usize,
     pub max_retries: u32,
+    pub use_docker: bool,
     pub log_dir: String,
     pub generated_dir: String,
 }
@@ -29,6 +30,7 @@ impl Default for AppConfig {
             auto_install_deps: false,
             max_history_messages: 20,
             max_retries: 3,
+            use_docker: false,
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
         }
@@ -75,6 +77,7 @@ mod tests {
         assert!(!cfg.auto_install_deps);
         assert_eq!(cfg.max_history_messages, 20);
         assert_eq!(cfg.max_retries, 3);
+        assert!(!cfg.use_docker);
         assert_eq!(cfg.log_dir, "logs");
         assert_eq!(cfg.generated_dir, "generated");
     }
@@ -104,6 +107,7 @@ mod tests {
             auto_install_deps = true
             max_history_messages = 10
             max_retries = 5
+            use_docker = true
             log_dir = "my_logs"
             generated_dir = "my_scripts"
         "#;
@@ -116,6 +120,7 @@ mod tests {
         assert!(cfg.auto_install_deps);
         assert_eq!(cfg.max_history_messages, 10);
         assert_eq!(cfg.max_retries, 5);
+        assert!(cfg.use_docker);
         assert_eq!(cfg.log_dir, "my_logs");
         assert_eq!(cfg.generated_dir, "my_scripts");
     }

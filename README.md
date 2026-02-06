@@ -19,6 +19,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 ### 🔄 Advanced Capabilities
 - **Multi-Turn Refinement**: Maintain conversation history to iteratively improve code
 - **Interactive Mode** 🎮: Automatically detects and runs interactive programs (pygame games, user input, GUIs)
+- **Docker Sandbox** 🐳: Optionally execute AI-generated code inside an isolated Docker container for security
 - **Syntax Check & Auto-Refine**: Validates code with `py_compile` before execution; offers to auto-fix syntax errors via AI
 - **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
 - **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
@@ -41,9 +42,10 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 
 ### Prerequisites
 
-- **Rust** (1.70+): [Install Rust](https://rustup.rs/)
+- **Rust** (1.80+): [Install Rust](https://rustup.rs/) — requires `LazyLock` support
 - **Python 3**: For executing generated scripts
 - **HuggingFace Token**: Required for API access (free tier available)
+- **Docker** (optional): For sandboxed script execution — [Install Docker](https://docs.docker.com/get-docker/)
 
 ### Installation
 
@@ -65,6 +67,16 @@ Get your token from [HuggingFace Settings](https://huggingface.co/settings/token
 ```bash
 cargo build --release
 cargo run
+```
+
+4. **(Optional) Build the Docker sandbox image**:
+```bash
+cd ..  # back to repo root
+docker build -t python-sandbox .
+```
+Then enable it in `pymakebot.toml`:
+```toml
+use_docker = true
 ```
 
 ---
@@ -102,7 +114,7 @@ def fibonacci(limit):
 fibonacci(100)
 -----------------------------------
 
-Execute this script? (o/n) : o
+Execute this script? (y/n) : y
 
 --- Execution Result ---
 STDOUT:
@@ -126,7 +138,7 @@ What would you like to change or add? Add division by zero handling
 > Create a pygame game with a bouncing ball
 
 ⚠️  Detected non-standard dependencies: pygame
-Install these dependencies? (o/n) : o
+Install these dependencies? (y/n) : y
 ✓ Dependencies installed successfully
 
 ----------- Generated Code -----------
@@ -134,7 +146,7 @@ import pygame
 # ... game code ...
 -----------------------------------
 
-Execute this script? (o/n) : o
+Execute this script? (y/n) : y
 
 🎮 Interactive mode detected (pygame/input/GUI)
    Running with inherited stdio for user interaction...
@@ -157,12 +169,13 @@ project_code/
 │   ├── config.rs        # AppConfig with TOML deserialization
 │   ├── api.rs           # HuggingFace API client with retry/backoff
 │   ├── interface.rs     # Interactive REPL with syntax check and auto-refine
-│   ├── python_exec.rs   # Python execution engine with timeout
+│   ├── python_exec.rs   # Python execution engine with timeout & Docker sandbox
 │   ├── utils.rs         # Code extraction, import parsing, UTF-8 utils
 │   └── logger.rs        # Logging and metrics
 ├── generated/           # Generated Python scripts
 ├── logs/                # Session logs
 ├── Cargo.toml           # Rust dependencies
+├── Dockerfile           # Docker sandbox image definition
 └── pymakebot.toml       # Optional configuration file
 ```
 
@@ -203,6 +216,7 @@ temperature = 0.2
 # Execution settings
 execution_timeout_secs = 30    # Kill scripts after this many seconds (0 = no timeout)
 auto_install_deps = false      # Auto-install detected dependencies without prompting
+use_docker = false             # Run scripts inside Docker sandbox (requires: docker build -t python-sandbox .)
 
 # API resilience
 max_retries = 3                # Retry on network errors, 429, and 5xx responses
@@ -244,16 +258,18 @@ View anytime with `/stats`
 ⚠️ **Important**: This tool executes AI-generated code automatically.
 
 **Best Practices**:
-1. Review generated code before execution
-2. Use in a sandboxed environment
+1. **Enable Docker sandbox** (`use_docker = true`) to isolate generated code from your host
+2. Review generated code before execution
 3. Don't commit your `.env` file
 4. Monitor API usage to avoid unexpected costs
 5. Be cautious with file system operations in generated code
 
 **Safety Features**:
+- **Docker sandbox**: Runs scripts in an isolated container with no network access and read-only script mount
 - Syntax check via `py_compile` before execution catches errors early
 - Execution timeout prevents runaway scripts
 - Dependency detection warns about non-standard imports before install
+- Graceful fallback to host execution if Docker is unavailable
 
 **Limitations**:
 - Requires HuggingFace Pro for heavy usage (free tier has rate limits)
@@ -310,13 +326,18 @@ MIT License - see LICENSE file for details
 ## 🔄 Version History
 
 ### v0.2.2 (Current - February 2026)
+- � **Docker Sandbox**: Execute AI-generated scripts inside an isolated Docker container (`use_docker = true`)
+  - Network-isolated execution (`--network none`), read-only script mount
+  - Dependency installation inside the container (persisted via `docker commit`)
+  - Supports both Captured and Interactive execution modes
+  - Graceful fallback to host execution when Docker is unavailable
 - 🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
 - 🔁 **API Retry**: Exponential backoff with jitter on network errors, 429, and 5xx
 - ⏱️ **Execution Timeout**: Configurable timeout kills runaway scripts in Captured mode
 - ✅ **Syntax Check**: Pre-execution validation via `py_compile` with auto-refine on errors
 - 📏 **History Limit**: Automatic trimming of conversation history to configured max
 - 🐛 **Bug Fixes**: UTF-8 safe string slicing, correct success detection (`exit_code == 0`), cached regex compilation
-- 🧹 **Code Quality**: Zero clippy warnings, 66 tests (59 unit + 7 integration)
+- 🧹 **Code Quality**: Zero clippy warnings, 68 tests (61 unit + 7 integration)
 
 ### v0.2.1 (December 2025)
 - 🎮 **Interactive Mode**: Automatic detection for pygame, input(), tkinter, GUIs
