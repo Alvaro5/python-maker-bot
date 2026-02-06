@@ -11,7 +11,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 ## ✨ Features
 
 ### 🎯 Core Functionality
-- **AI-Powered Code Generation**: Uses HuggingFace's Qwen2.5-Coder-7B-Instruct model for high-quality Python code
+- **AI-Powered Code Generation**: Uses HuggingFace's Qwen2.5-Coder-7B-Instruct model for high-quality Python code (configurable)
 - **Interactive REPL**: Easy-to-use command-line interface with helpful commands
 - **Automatic Code Execution**: Run generated Python scripts directly from the shell
 - **Smart Code Extraction**: Handles markdown-formatted responses and extracts clean Python code
@@ -19,9 +19,13 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 ### 🔄 Advanced Capabilities
 - **Multi-Turn Refinement**: Maintain conversation history to iteratively improve code
 - **Interactive Mode** 🎮: Automatically detects and runs interactive programs (pygame games, user input, GUIs)
+- **Syntax Check & Auto-Refine**: Validates code with `py_compile` before execution; offers to auto-fix syntax errors via AI
+- **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
+- **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
+- **Conversation History Limit**: Automatically trims old messages to keep context manageable
 - **Script Management**: List and re-run previously generated scripts anytime
 - **Dependency Detection**: Automatically detects non-standard library imports
-- **Auto-Installation**: Prompts to install required packages via pip
+- **Auto-Installation**: Prompts to install required packages via pip (or auto-installs with config)
 - **Session Logging**: All API calls and executions logged to timestamped files
 - **Success Metrics**: Track and display success rates and session statistics
 
@@ -149,29 +153,33 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 ```
 project_code/
 ├── src/
-│   ├── main.rs          # Entry point
-│   ├── api.rs           # HuggingFace API client
-│   ├── interface.rs     # Interactive REPL
-│   ├── python_exec.rs   # Python execution engine
-│   ├── utils.rs         # Helper functions
+│   ├── main.rs          # Entry point; loads .env and config
+│   ├── config.rs        # AppConfig with TOML deserialization
+│   ├── api.rs           # HuggingFace API client with retry/backoff
+│   ├── interface.rs     # Interactive REPL with syntax check and auto-refine
+│   ├── python_exec.rs   # Python execution engine with timeout
+│   ├── utils.rs         # Code extraction, import parsing, UTF-8 utils
 │   └── logger.rs        # Logging and metrics
 ├── generated/           # Generated Python scripts
 ├── logs/                # Session logs
 ├── Cargo.toml           # Rust dependencies
-└── README.md            # This file
+└── pymakebot.toml       # Optional configuration file
 ```
 
 ### Technology Stack
 
 - **Language**: Rust 2021 Edition
-- **AI Model**: Qwen/Qwen2.5-Coder-7B-Instruct (HuggingFace)
+- **AI Model**: Qwen/Qwen2.5-Coder-7B-Instruct (HuggingFace) — configurable
 - **Key Dependencies**:
   - `reqwest`: HTTP client for API calls
   - `tokio`: Async runtime
   - `serde/serde_json`: JSON serialization
+  - `toml/dirs`: Configuration file support
+  - `wait-timeout`: Execution timeout
   - `colored`: Terminal color output
-  - `regex`: Code extraction
+  - `regex`: Code extraction (cached with `LazyLock`)
   - `chrono`: Timestamps
+  - `rand`: Retry jitter
 
 ---
 
@@ -179,21 +187,35 @@ project_code/
 
 ### Environment Variables
 
-- `HF_TOKEN`: Your HuggingFace API token (required)
+- `HF_TOKEN`: Your HuggingFace API token (required, via `.env` file)
 
-### Model Configuration
+### Configuration File (`pymakebot.toml`)
 
-The default model is `Qwen/Qwen2.5-Coder-7B-Instruct`. To use a different model, edit `src/api.rs`:
+Create an optional `pymakebot.toml` in the project directory or your home directory. All fields are optional — missing fields use defaults:
 
-```rust
-model: "your-preferred-model".to_string(),
+```toml
+# AI model settings
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+api_url = "https://router.huggingface.co/v1/chat/completions"
+max_tokens = 16284
+temperature = 0.2
+
+# Execution settings
+execution_timeout_secs = 30    # Kill scripts after this many seconds (0 = no timeout)
+auto_install_deps = false      # Auto-install detected dependencies without prompting
+
+# API resilience
+max_retries = 3                # Retry on network errors, 429, and 5xx responses
+
+# History management
+max_history_messages = 20      # Trim oldest messages when history exceeds this
+
+# File locations
+log_dir = "logs"
+generated_dir = "generated"
 ```
 
-### Generation Parameters
-
-Adjust in `src/api.rs`:
-- `max_tokens`: Maximum response length (default: 4096, increased for complete games)
-- `temperature`: Creativity level (default: 0.2 for deterministic code)
+**Load order**: `./pymakebot.toml` → `~/pymakebot.toml` → built-in defaults
 
 ---
 
@@ -228,10 +250,14 @@ View anytime with `/stats`
 4. Monitor API usage to avoid unexpected costs
 5. Be cautious with file system operations in generated code
 
+**Safety Features**:
+- Syntax check via `py_compile` before execution catches errors early
+- Execution timeout prevents runaway scripts
+- Dependency detection warns about non-standard imports before install
+
 **Limitations**:
 - Requires HuggingFace Pro for heavy usage (free tier has rate limits)
 - Generated code quality depends on prompt clarity
-- No built-in code validation or security scanning
 
 ---
 
@@ -239,11 +265,9 @@ View anytime with `/stats`
 
 Contributions are welcome! Areas for improvement:
 
-- [ ] Add unit and integration tests
 - [ ] Implement virtual environment isolation per script
 - [ ] Support for additional AI models (OpenAI, Anthropic, etc.)
 - [ ] Web UI using Tauri or similar
-- [ ] Code validation and linting before execution
 - [ ] Support for other programming languages
 
 ---
@@ -285,7 +309,16 @@ MIT License - see LICENSE file for details
 
 ## 🔄 Version History
 
-### v0.2.1 (Current - December 2025)
+### v0.2.2 (Current - February 2026)
+- 🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
+- 🔁 **API Retry**: Exponential backoff with jitter on network errors, 429, and 5xx
+- ⏱️ **Execution Timeout**: Configurable timeout kills runaway scripts in Captured mode
+- ✅ **Syntax Check**: Pre-execution validation via `py_compile` with auto-refine on errors
+- 📏 **History Limit**: Automatic trimming of conversation history to configured max
+- 🐛 **Bug Fixes**: UTF-8 safe string slicing, correct success detection (`exit_code == 0`), cached regex compilation
+- 🧹 **Code Quality**: Zero clippy warnings, 66 tests (59 unit + 7 integration)
+
+### v0.2.1 (December 2025)
 - 🎮 **Interactive Mode**: Automatic detection for pygame, input(), tkinter, GUIs
 - 📂 **Script Management**: `/list` and `/run` commands for previously generated scripts
 - 🎯 **Enhanced AI Prompts**: Better code generation with self-contained scripts (no external files)
