@@ -19,6 +19,9 @@ target/
 .env
 .env.*
 
+# Allow example env to be committed (contains no secrets)
+!.env.example
+
 # IDEs and editors
 .vscode/
 .idea/
