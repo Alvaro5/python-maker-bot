@@ -160,7 +160,7 @@ fn stop_spinner(handle: &Arc<AtomicBool>) {
 pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
-    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker, &config.python_executable).expect("Failed to create generated scripts directory");
+    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let metrics = SessionMetrics::new();
 
@@ -174,10 +174,14 @@ pub async fn start_repl(config: &AppConfig) {
                 println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
                 // Recreate executor without Docker
                 // (we can't mutate executor, so shadow it)
-                let executor = CodeExecutor::new(&config.generated_dir, false, &config.python_executable).expect("Failed to create generated scripts directory");
+                let executor = CodeExecutor::new(&config.generated_dir, false, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
                 return start_repl_loop(config, executor, logger, metrics).await;
             }
         }
+    }
+
+    if config.use_venv {
+        println!("{}", "✓ Virtual environment isolation enabled.".green());
     }
 
     start_repl_loop(config, executor, logger, metrics).await;
@@ -349,6 +353,13 @@ async fn start_repl_loop(
                 Ok(code) => {
                     println!("\n{}", format!("Running: {}", script_path).bright_cyan());
 
+                    // Create a venv for this execution (host mode only)
+                    let venv = executor.create_venv().unwrap_or_else(|e| {
+                        println!("{} {}", "⚠️  Failed to create venv:".yellow(), e);
+                        println!("{}", "Proceeding without virtual environment...".dimmed());
+                        None
+                    });
+
                     // Check for dependencies
                     let deps = executor.detect_dependencies(&code);
                     if !deps.is_empty() {
@@ -356,7 +367,7 @@ async fn start_repl_loop(
                             "⚠️  Detected non-standard dependencies:".yellow(),
                             deps.join(", ").bright_yellow());
                         if config.auto_install_deps || confirm("Install these dependencies?") {
-                            if let Err(e) = executor.install_packages(&deps) {
+                            if let Err(e) = executor.install_packages(&deps, venv.as_deref()) {
                                 println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
                                 println!("{}", "Proceeding anyway...".dimmed());
                             }
@@ -372,7 +383,7 @@ async fn start_repl_loop(
                         ExecutionMode::Captured
                     };
 
-                    match executor.run_existing_script(&script_path, mode, config.execution_timeout_secs) {
+                    match executor.run_existing_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &deps) {
                         Ok(result) => {
                             let success = result.is_success();
                             if success {
@@ -399,6 +410,11 @@ async fn start_repl_loop(
                             let _ = logger.log_error(&format!("Execution error: {}", e));
                             println!("{} {}", "✗ Execution error:".red(), e);
                         }
+                    }
+
+                    // Clean up the venv
+                    if let Some(ref venv_path) = venv {
+                        executor.cleanup_venv(venv_path);
                     }
                 }
                 Err(e) => println!("{} {}", "✗ Failed to read script:".red(), e),
@@ -533,6 +549,13 @@ async fn start_repl_loop(
                 }
 
                 if confirm("Execute this script?") {
+                    // Create a venv for this execution (host mode only)
+                    let venv = executor.create_venv().unwrap_or_else(|e| {
+                        println!("{} {}", "⚠️  Failed to create venv:".yellow(), e);
+                        println!("{}", "Proceeding without virtual environment...".dimmed());
+                        None
+                    });
+
                     // Check for dependencies
                     let deps = executor.detect_dependencies(&last_generated_code);
                     if !deps.is_empty() {
@@ -540,7 +563,7 @@ async fn start_repl_loop(
                             "⚠️  Detected non-standard dependencies:".yellow(),
                             deps.join(", ").bright_yellow());
                         if config.auto_install_deps || confirm("Install these dependencies?") {
-                            if let Err(e) = executor.install_packages(&deps) {
+                            if let Err(e) = executor.install_packages(&deps, venv.as_deref()) {
                                 println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
                                 println!("{}", "Proceeding anyway...".dimmed());
                             }
@@ -556,7 +579,7 @@ async fn start_repl_loop(
                         ExecutionMode::Captured
                     };
 
-                    match executor.execute_script(&script_path, mode, config.execution_timeout_secs) {
+                    match executor.execute_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &deps) {
                         Ok(result) => {
                             let success = result.is_success();
                             if success {
@@ -611,13 +634,17 @@ async fn start_repl_loop(
 
                                         display_code(&fixed_code);
 
+                                        // Detect updated deps for the fixed code
+                                        let fixed_deps = executor.detect_dependencies(&fixed_code);
+
                                         // Overwrite the script with the fixed code
                                         if let Err(e) = fs::write(&script_path, &fixed_code) {
                                             println!("{} {}", "✗ Failed to write fixed script:".red(), e);
                                         } else if let Err(syn_err) = executor.syntax_check(&script_path) {
                                             println!("{} {}", "✗ Fixed code has syntax errors:".red(), syn_err);
                                         } else if confirm("Execute the fixed script?") {
-                                            match executor.execute_script(&script_path, mode, config.execution_timeout_secs) {
+                                            // Reuse the same venv for the retry execution
+                                            match executor.execute_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &fixed_deps) {
                                                 Ok(retry_result) => {
                                                     let retry_success = retry_result.is_success();
                                                     if retry_success {
@@ -661,6 +688,11 @@ async fn start_repl_loop(
                             let _ = logger.log_error(&format!("Execution error: {}", e));
                             println!("{} {}", "✗ Execution error:".red(), e);
                         }
+                    }
+
+                    // Clean up the venv after execution is done
+                    if let Some(ref venv_path) = venv {
+                        executor.cleanup_venv(venv_path);
                     }
                 }
             }

@@ -15,6 +15,7 @@ pub struct AppConfig {
     pub max_history_messages: usize,
     pub max_retries: u32,
     pub use_docker: bool,
+    pub use_venv: bool,
     pub log_dir: String,
     pub generated_dir: String,
     pub python_executable: String,
@@ -32,6 +33,7 @@ impl Default for AppConfig {
             max_history_messages: 20,
             max_retries: 3,
             use_docker: false,
+            use_venv: true,
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
             python_executable: "python3".to_string(),
@@ -80,6 +82,7 @@ mod tests {
         assert_eq!(cfg.max_history_messages, 20);
         assert_eq!(cfg.max_retries, 3);
         assert!(!cfg.use_docker);
+        assert!(cfg.use_venv);
         assert_eq!(cfg.log_dir, "logs");
         assert_eq!(cfg.python_executable, "python3");
         assert_eq!(cfg.generated_dir, "generated");

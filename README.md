@@ -20,6 +20,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **Multi-Turn Refinement**: Maintain conversation history to iteratively improve code
 - **Interactive Mode** 🎮: Automatically detects and runs interactive programs (pygame games, user input, GUIs)
 - **Docker Sandbox** 🐳: Optionally execute AI-generated code inside an isolated Docker container for security
+- **Virtual Environment Isolation** 🐍: Each script runs in a temporary venv to avoid polluting the system Python (host & Docker)
 - **Syntax Check & Auto-Refine**: Validates code with `py_compile` before execution; offers to auto-fix syntax errors via AI
 - **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
 - **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
@@ -168,7 +169,7 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 │   ├── config.rs        # AppConfig with TOML deserialization
 │   ├── api.rs           # HuggingFace API client with retry/backoff
 │   ├── interface.rs     # Interactive REPL with syntax check and auto-refine
-│   ├── python_exec.rs   # Python execution engine with timeout & Docker sandbox
+│   ├── python_exec.rs   # Python execution engine with timeout, venv & Docker sandbox
 │   ├── utils.rs         # Code extraction, import parsing, UTF-8 utils
 │   └── logger.rs        # Logging and metrics
 ├── generated/           # Generated Python scripts
@@ -216,6 +217,7 @@ temperature = 0.2
 execution_timeout_secs = 30    # Kill scripts after this many seconds (0 = no timeout)
 auto_install_deps = false      # Auto-install detected dependencies without prompting
 use_docker = false             # Run scripts inside Docker sandbox (requires: docker build -t python-sandbox .)
+use_venv = true                # Isolate each execution in a temporary Python virtual environment
 
 # API resilience
 max_retries = 3                # Retry on network errors, 429, and 5xx responses
@@ -265,6 +267,7 @@ View anytime with `/stats`
 
 **Safety Features**:
 - **Docker sandbox**: Runs scripts in an isolated container with no network access and read-only script mount
+- **Virtual environment isolation**: Temp venv per execution prevents dependency pollution (host & Docker)
 - Syntax check via `py_compile` before execution catches errors early
 - Execution timeout prevents runaway scripts
 - Dependency detection warns about non-standard imports before install
@@ -280,7 +283,7 @@ View anytime with `/stats`
 
 Contributions are welcome! Areas for improvement:
 
-- [ ] Implement virtual environment isolation per script
+- [x] Implement virtual environment isolation per script
 - [ ] Support for additional AI models (OpenAI, Anthropic, etc.)
 - [ ] Web UI using Tauri or similar
 - [ ] Support for other programming languages
@@ -310,7 +313,7 @@ use python_maker_bot::{AppConfig, CodeExecutor, ExecutionMode};
 
 fn main() -> anyhow::Result<()> {
   let cfg = AppConfig::load();
-  let executor = CodeExecutor::new(&cfg.generated_dir, cfg.use_docker, &cfg.python_executable)?;
+  let executor = CodeExecutor::new(&cfg.generated_dir, cfg.use_docker, cfg.use_venv, &cfg.python_executable)?;
 
   // Write and run a script (synchronous API available in the lib)
   let result = executor.write_and_run_with_mode("print(\"hi\")", ExecutionMode::Captured)?;
@@ -359,18 +362,22 @@ MIT License - see LICENSE file for details
 ## 🔄 Version History
 
 ### v0.2.2 (Current - February 2026)
-- � **Docker Sandbox**: Execute AI-generated scripts inside an isolated Docker container (`use_docker = true`)
+- 🐳 **Docker Sandbox**: Execute AI-generated scripts inside an isolated Docker container (`use_docker = true`)
   - Network-isolated execution (`--network none`), read-only script mount
   - Dependency installation inside the container (persisted via `docker commit`)
   - Supports both Captured and Interactive execution modes
   - Graceful fallback to host execution when Docker is unavailable
+- 🐍 **Virtual Environment Isolation**: Each script execution runs in a temporary Python venv (`use_venv = true`, on by default)
+  - Host mode: temp venv in OS temp dir, auto-cleaned after execution
+  - Docker mode: venv created inline inside the ephemeral container — no image mutation
+  - Prevents dependency conflicts and system Python pollution
 - 🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
 - 🔁 **API Retry**: Exponential backoff with jitter on network errors, 429, and 5xx
 - ⏱️ **Execution Timeout**: Configurable timeout kills runaway scripts in Captured mode
 - ✅ **Syntax Check**: Pre-execution validation via `py_compile` with auto-refine on errors
 - 📏 **History Limit**: Automatic trimming of conversation history to configured max
 - 🐛 **Bug Fixes**: UTF-8 safe string slicing, correct success detection (`exit_code == 0`), cached regex compilation
-- 🧹 **Code Quality**: Zero clippy warnings, 68 tests (61 unit + 7 integration)
+- 🧹 **Code Quality**: Zero clippy warnings, 74 tests (67 unit + 7 integration)
 
 ### v0.2.1 (December 2025)
 - 🎮 **Interactive Mode**: Automatic detection for pygame, input(), tkinter, GUIs

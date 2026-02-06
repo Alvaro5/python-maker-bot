@@ -38,6 +38,7 @@ impl CodeExecutionResult {
 pub struct CodeExecutor {
     base_dir: PathBuf,
     use_docker: bool,
+    use_venv: bool,
     python_executable: String,
 }
 
@@ -46,10 +47,11 @@ impl CodeExecutor {
     ///
     /// `base_dir`: directory where generated scripts are stored.
     /// `use_docker`: if true, scripts run inside the `python-sandbox` Docker container.
-    pub fn new(base_dir: &str, use_docker: bool, python_executable: &str) -> Result<Self> {
+    /// `use_venv`: if true, each execution runs inside a temporary Python virtual environment.
+    pub fn new(base_dir: &str, use_docker: bool, use_venv: bool, python_executable: &str) -> Result<Self> {
         let dir = PathBuf::from(base_dir);
         ensure_dir(&dir)?;
-        Ok(Self { base_dir: dir, use_docker, python_executable: python_executable.to_string() })
+        Ok(Self { base_dir: dir, use_docker, use_venv, python_executable: python_executable.to_string() })
     }
 
     /// Check whether Docker is available and the sandbox image exists.
@@ -95,9 +97,105 @@ impl CodeExecutor {
             .collect()
     }
 
-    /// Install Python packages using pip (host or Docker).
-    pub fn install_packages(&self, packages: &[String]) -> Result<()> {
+    // ── Virtual environment management ──────────────────────────────────
+
+    /// Create a temporary Python virtual environment on the host.
+    ///
+    /// Returns `Some(path)` when `use_venv` is enabled and Docker is off,
+    /// `None` when venv is disabled or Docker mode is active (Docker+venv
+    /// creates the venv inline inside the container at execution time).
+    pub fn create_venv(&self) -> Result<Option<PathBuf>> {
+        if !self.use_venv {
+            return Ok(None);
+        }
+        // In Docker+venv mode, the venv is created inside the container.
+        if self.use_docker {
+            return Ok(None);
+        }
+
+        let ts = Utc::now().format("%Y%m%d_%H%M%S_%3f");
+        let venv_dir = std::env::temp_dir().join(format!("pymakebot_venv_{ts}"));
+
+        let primary = self.python_executable.as_str();
+        let python_cmds = [primary, "python"];
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for cmd in python_cmds {
+            let output = Command::new(cmd)
+                .args(["-m", "venv"])
+                .arg(&venv_dir)
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    println!("✓ Virtual environment created at {}", venv_dir.display());
+                    return Ok(Some(venv_dir));
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    last_err = Some(anyhow::anyhow!("venv creation failed with {}: {}", cmd, stderr));
+                }
+                Err(e) => {
+                    last_err = Some(anyhow::anyhow!("Failed to run {} -m venv: {}", cmd, e));
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("Could not create virtual environment with python/python3")
+        }))
+    }
+
+    /// Return the Python interpreter path inside a host venv.
+    fn venv_python(venv_path: &std::path::Path) -> PathBuf {
+        if cfg!(windows) {
+            venv_path.join("Scripts").join("python.exe")
+        } else {
+            // Try python3 first, then python (venv may create either or both)
+            let python3 = venv_path.join("bin").join("python3");
+            if python3.exists() {
+                return python3;
+            }
+            venv_path.join("bin").join("python")
+        }
+    }
+
+    /// Return the pip executable path inside a host venv.
+    fn venv_pip(venv_path: &std::path::Path) -> PathBuf {
+        if cfg!(windows) {
+            venv_path.join("Scripts").join("pip.exe")
+        } else {
+            venv_path.join("bin").join("pip")
+        }
+    }
+
+    /// Remove a temporary virtual environment directory.
+    pub fn cleanup_venv(&self, venv_path: &std::path::Path) {
+        if venv_path.exists() {
+            match fs::remove_dir_all(venv_path) {
+                Ok(()) => println!("✓ Virtual environment cleaned up"),
+                Err(e) => eprintln!("Warning: failed to remove venv at {}: {}", venv_path.display(), e),
+            }
+        }
+    }
+
+    // ── Package installation ────────────────────────────────────────────
+
+    /// Install Python packages using pip.
+    ///
+    /// * Host mode without venv: installs system-wide.
+    /// * Host mode with venv: installs into the provided venv.
+    /// * Docker mode without venv: commits packages into the Docker image.
+    /// * Docker mode with venv: no-op — deps are installed inline at execution time.
+    pub fn install_packages(&self, packages: &[String], venv: Option<&std::path::Path>) -> Result<()> {
         if packages.is_empty() {
+            return Ok(());
+        }
+
+        // Docker+venv: deps will be installed inside the container at execution time
+        if self.use_docker && self.use_venv {
+            println!("ℹ  Dependencies ({}) will be installed in a container venv at execution time",
+                packages.join(", "));
             return Ok(());
         }
 
@@ -107,10 +205,34 @@ impl CodeExecutor {
             return self.install_packages_docker(packages);
         }
 
+        if let Some(venv_path) = venv {
+            return self.install_packages_venv(venv_path, packages);
+        }
+
         self.install_packages_host(packages)
     }
 
-    /// Install packages on the host via pip.
+    /// Install packages into a host-side virtual environment.
+    fn install_packages_venv(&self, venv_path: &std::path::Path, packages: &[String]) -> Result<()> {
+        let pip = Self::venv_pip(venv_path);
+        let mut args = vec!["install".to_string(), "--quiet".to_string()];
+        args.extend(packages.iter().cloned());
+
+        let output = Command::new(&pip)
+            .args(&args)
+            .output()
+            .with_context(|| format!("Failed to run pip in venv at {}", venv_path.display()))?;
+
+        if output.status.success() {
+            println!("✓ Dependencies installed in virtual environment");
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow::anyhow!("pip install failed in venv: {}", stderr))
+        }
+    }
+
+    /// Install packages on the host via pip (system-wide).
     fn install_packages_host(&self, packages: &[String]) -> Result<()> {
         let primary = self.python_executable.as_str();
         let python_cmds = [primary, "python"];
@@ -150,7 +272,7 @@ impl CodeExecutor {
         }))
     }
 
-    /// Install packages inside the Docker sandbox image.
+    /// Install packages inside the Docker sandbox image (no venv).
     /// We run `pip install` inside a temporary container based on the sandbox
     /// image, then commit the result back so subsequent runs have the packages.
     fn install_packages_docker(&self, packages: &[String]) -> Result<()> {
@@ -269,35 +391,58 @@ impl CodeExecutor {
     /// Write and execute a Python script with the specified execution mode.
     pub fn write_and_run_with_mode(&self, code: &str, mode: ExecutionMode) -> Result<CodeExecutionResult> {
         let script_path = self.write_script(code)?;
-        self.execute_script(&script_path, mode, 0) // 0 = no timeout
+        self.execute_script(&script_path, mode, 0, None, &[]) // 0 = no timeout
     }
 
     /// Execute a previously generated script by path.
-    pub fn run_existing_script(&self, script_path: &str, mode: ExecutionMode, timeout_secs: u64) -> Result<CodeExecutionResult> {
+    pub fn run_existing_script(
+        &self,
+        script_path: &str,
+        mode: ExecutionMode,
+        timeout_secs: u64,
+        venv: Option<&std::path::Path>,
+        deps: &[String],
+    ) -> Result<CodeExecutionResult> {
         let path = PathBuf::from(script_path);
         if !path.exists() {
             return Err(anyhow::anyhow!("Script not found: {}", script_path));
         }
-        self.execute_script(&path, mode, timeout_secs)
+        self.execute_script(&path, mode, timeout_secs, venv, deps)
     }
 
     /// Execute a Python script. `timeout_secs == 0` means no timeout.
     /// Timeout only applies to `Captured` mode.
+    ///
+    /// * `venv` — path to a host-side venv (used in host+venv mode).
+    /// * `deps` — packages to install in a Docker venv (used in Docker+venv mode).
+    ///
     /// When `self.use_docker` is true, runs inside the `python-sandbox` container.
-    pub fn execute_script(&self, script_path: &PathBuf, mode: ExecutionMode, timeout_secs: u64) -> Result<CodeExecutionResult> {
+    pub fn execute_script(
+        &self,
+        script_path: &PathBuf,
+        mode: ExecutionMode,
+        timeout_secs: u64,
+        venv: Option<&std::path::Path>,
+        deps: &[String],
+    ) -> Result<CodeExecutionResult> {
         if self.use_docker {
-            self.execute_script_docker(script_path, mode, timeout_secs)
+            self.execute_script_docker(script_path, mode, timeout_secs, deps)
         } else {
-            self.execute_script_host(script_path, mode, timeout_secs)
+            self.execute_script_host(script_path, mode, timeout_secs, venv)
         }
     }
 
     /// Execute a script inside the Docker sandbox container.
+    ///
+    /// When `use_venv` is enabled, creates a temporary venv inside the container,
+    /// installs `deps`, and runs the script — all in a single ephemeral `docker run`.
+    /// This avoids mutating the base Docker image.
     fn execute_script_docker(
         &self,
         script_path: &PathBuf,
         mode: ExecutionMode,
         timeout_secs: u64,
+        deps: &[String],
     ) -> Result<CodeExecutionResult> {
         let absolute_path = std::fs::canonicalize(script_path)
             .with_context(|| format!("Could not resolve path: {:?}", script_path))?;
@@ -315,18 +460,45 @@ impl CodeExecutor {
         let volume_mount = format!("{}:/home/sandboxuser/scripts:ro", parent_dir);
         let script_in_container = format!("/home/sandboxuser/scripts/{}", filename);
 
+        // When venv is enabled, build a shell command that creates a venv,
+        // installs dependencies, and runs the script — all in one ephemeral container.
+        let use_venv_in_docker = self.use_venv;
+
+        // Build the entrypoint command for venv mode
+        let venv_shell_cmd = if use_venv_in_docker {
+            let mut parts = vec![
+                "python3 -m venv /tmp/venv".to_string(),
+            ];
+            if !deps.is_empty() {
+                parts.push(format!(
+                    "/tmp/venv/bin/pip install --quiet {}",
+                    deps.join(" ")
+                ));
+            }
+            parts.push(format!("/tmp/venv/bin/python3 {}", script_in_container));
+            Some(parts.join(" && "))
+        } else {
+            None
+        };
+
         match mode {
             ExecutionMode::Interactive => {
-                // Interactive Docker: inherit stdio, add -it flags, no timeout
-                let child = Command::new("docker")
-                    .args([
-                        "run", "--rm",
-                        "-i",
-                        "-v", &volume_mount,
-                        "--network", "none",
-                        DOCKER_IMAGE,
-                        "python3", &script_in_container,
-                    ])
+                let mut cmd = Command::new("docker");
+                cmd.args([
+                    "run", "--rm",
+                    "-i",
+                    "-v", &volume_mount,
+                    "--network", "none",
+                ]);
+
+                if let Some(ref shell_cmd) = venv_shell_cmd {
+                    // Venv mode: need root to create venv, run via bash
+                    cmd.args(["--user", "root", DOCKER_IMAGE, "bash", "-c", shell_cmd]);
+                } else {
+                    cmd.args([DOCKER_IMAGE, "python3", &script_in_container]);
+                }
+
+                let child = cmd
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
@@ -347,14 +519,20 @@ impl CodeExecutor {
                 }
             }
             ExecutionMode::Captured => {
-                let child = Command::new("docker")
-                    .args([
-                        "run", "--rm",
-                        "-v", &volume_mount,
-                        "--network", "none",
-                        DOCKER_IMAGE,
-                        "python3", &script_in_container,
-                    ])
+                let mut cmd = Command::new("docker");
+                cmd.args([
+                    "run", "--rm",
+                    "-v", &volume_mount,
+                    "--network", "none",
+                ]);
+
+                if let Some(ref shell_cmd) = venv_shell_cmd {
+                    cmd.args(["--user", "root", DOCKER_IMAGE, "bash", "-c", shell_cmd]);
+                } else {
+                    cmd.args([DOCKER_IMAGE, "python3", &script_in_container]);
+                }
+
+                let child = cmd
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn();
@@ -411,12 +589,23 @@ impl CodeExecutor {
     }
 
     /// Execute a script directly on the host with python3/python fallback.
+    /// When `venv` is provided, uses the venv's Python interpreter instead.
     fn execute_script_host(
         &self,
         script_path: &PathBuf,
         mode: ExecutionMode,
         timeout_secs: u64,
+        venv: Option<&std::path::Path>,
     ) -> Result<CodeExecutionResult> {
+        // If a venv is available, use its python directly (no fallback needed)
+        if let Some(venv_path) = venv {
+            let python = Self::venv_python(venv_path);
+            let python_str = python.to_str()
+                .ok_or_else(|| anyhow::anyhow!("Venv python path is not valid UTF-8"))?;
+            return self.execute_with_interpreter(python_str, script_path, mode, timeout_secs);
+        }
+
+        // No venv — fall back through system interpreters
         let primary = self.python_executable.as_str();
         let python_cmds = [primary, "python"];
         let mut last_err: Option<anyhow::Error> = None;
@@ -519,6 +708,87 @@ impl CodeExecutor {
             "Could not execute the script with python/python3"
         )))
     }
+
+    /// Execute a script with a specific interpreter (used for venv python path).
+    fn execute_with_interpreter(
+        &self,
+        interpreter: &str,
+        script_path: &PathBuf,
+        mode: ExecutionMode,
+        timeout_secs: u64,
+    ) -> Result<CodeExecutionResult> {
+        match mode {
+            ExecutionMode::Interactive => {
+                let child = Command::new(interpreter)
+                    .arg(script_path)
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .with_context(|| format!("Failed to spawn venv python: {}", interpreter))?;
+
+                let status = child.wait_with_output()
+                    .context("Failed to wait for venv process")?;
+                Ok(CodeExecutionResult {
+                    script_path: script_path.clone(),
+                    stdout: String::from("[Interactive mode - output displayed directly]"),
+                    stderr: String::new(),
+                    exit_code: status.status.code(),
+                })
+            }
+            ExecutionMode::Captured => {
+                let mut process = Command::new(interpreter)
+                    .arg(script_path)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .with_context(|| format!("Failed to spawn venv python: {}", interpreter))?;
+
+                if timeout_secs > 0 {
+                    let timeout = Duration::from_secs(timeout_secs);
+                    match process.wait_timeout(timeout)
+                        .context("Failed to wait for venv process")?
+                    {
+                        Some(status) => {
+                            let stdout = read_pipe(process.stdout.take());
+                            let stderr = read_pipe(process.stderr.take());
+                            Ok(CodeExecutionResult {
+                                script_path: script_path.clone(),
+                                stdout,
+                                stderr,
+                                exit_code: status.code(),
+                            })
+                        }
+                        None => {
+                            let _ = process.kill();
+                            let _ = process.wait();
+                            Ok(CodeExecutionResult {
+                                script_path: script_path.clone(),
+                                stdout: String::new(),
+                                stderr: format!(
+                                    "Process timed out after {} seconds. \
+                                     You can increase this with execution_timeout_secs in pymakebot.toml",
+                                    timeout_secs
+                                ),
+                                exit_code: None,
+                            })
+                        }
+                    }
+                } else {
+                    let output = process.wait_with_output()
+                        .context("Failed to wait for venv process")?;
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    Ok(CodeExecutionResult {
+                        script_path: script_path.clone(),
+                        stdout,
+                        stderr,
+                        exit_code: output.status.code(),
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// Helper to read a piped child stdio handle into a String.
@@ -538,15 +808,15 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// Helper: create an executor with Docker disabled (host mode).
+    /// Helper: create an executor with Docker disabled, venv disabled (host mode).
     fn host_executor(dir: &str) -> CodeExecutor {
-        CodeExecutor::new(dir, false, "python3").unwrap()
+        CodeExecutor::new(dir, false, false, "python3").unwrap()
     }
 
     #[test]
     fn test_executor_creation() {
         let temp_dir = "test_executor_temp";
-        let executor = CodeExecutor::new(temp_dir, false, "python3");
+        let executor = CodeExecutor::new(temp_dir, false, false, "python3");
         assert!(executor.is_ok());
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -554,8 +824,17 @@ mod tests {
     #[test]
     fn test_executor_creation_docker_flag() {
         let temp_dir = "test_executor_docker_flag";
-        let executor = CodeExecutor::new(temp_dir, true, "python3").unwrap();
+        let executor = CodeExecutor::new(temp_dir, true, false, "python3").unwrap();
         assert!(executor.use_docker);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_executor_creation_venv_flag() {
+        let temp_dir = "test_executor_venv_flag";
+        let executor = CodeExecutor::new(temp_dir, false, true, "python3").unwrap();
+        assert!(executor.use_venv);
+        assert!(!executor.use_docker);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
@@ -639,7 +918,7 @@ mod tests {
     #[test]
     fn test_install_packages_empty_list() {
         let executor = host_executor("test_temp");
-        let result = executor.install_packages(&[]);
+        let result = executor.install_packages(&[], None);
         assert!(result.is_ok());
         let _ = fs::remove_dir_all("test_temp");
     }
@@ -746,7 +1025,7 @@ mod tests {
     fn test_execution_timeout() {
         let executor = host_executor("test_timeout_dir");
         let path = executor.write_script("import time\ntime.sleep(10)").unwrap();
-        let result = executor.execute_script(&path, ExecutionMode::Captured, 2).unwrap();
+        let result = executor.execute_script(&path, ExecutionMode::Captured, 2, None, &[]).unwrap();
         assert!(!result.is_success());
         assert!(result.stderr.contains("timed out"));
         let _ = fs::remove_dir_all("test_timeout_dir");
@@ -756,5 +1035,70 @@ mod tests {
     fn test_docker_image_constant() {
         // Ensure the constant matches what the Dockerfile builds
         assert_eq!(DOCKER_IMAGE, "python-sandbox");
+    }
+
+    #[test]
+    fn test_create_venv_disabled() {
+        // When use_venv is false, create_venv returns None
+        let executor = host_executor("test_venv_disabled");
+        let result = executor.create_venv().unwrap();
+        assert!(result.is_none());
+        let _ = fs::remove_dir_all("test_venv_disabled");
+    }
+
+    #[test]
+    fn test_create_venv_docker_mode() {
+        // When use_docker is true (even with use_venv), create_venv returns None
+        // because venv is created inside the container at execution time
+        let temp_dir = "test_venv_docker_mode";
+        let executor = CodeExecutor::new(temp_dir, true, true, "python3").unwrap();
+        let result = executor.create_venv().unwrap();
+        assert!(result.is_none());
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_create_and_cleanup_venv() {
+        // When use_venv is true and Docker is off, create_venv makes a real venv
+        let temp_dir = "test_create_cleanup_venv";
+        let executor = CodeExecutor::new(temp_dir, false, true, "python3").unwrap();
+        let venv = executor.create_venv().unwrap();
+        assert!(venv.is_some());
+        let venv_path = venv.unwrap();
+        assert!(venv_path.exists());
+        // Check the venv has a python3 binary
+        let python = CodeExecutor::venv_python(&venv_path);
+        assert!(python.exists(), "venv python not found at {:?} (checked python3 and python)", python);
+        // Clean up
+        executor.cleanup_venv(&venv_path);
+        assert!(!venv_path.exists());
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_execute_in_venv() {
+        // Create a venv, then execute a simple script in it
+        let temp_dir = "test_execute_in_venv";
+        let executor = CodeExecutor::new(temp_dir, false, true, "python3").unwrap();
+        let venv = executor.create_venv().unwrap();
+        assert!(venv.is_some());
+        let venv_path = venv.as_deref().unwrap();
+        let path = executor.write_script("import sys; print(sys.prefix)").unwrap();
+        let result = executor.execute_script(&path, ExecutionMode::Captured, 5, Some(venv_path), &[]).unwrap();
+        assert!(result.is_success());
+        // The output should mention the venv path
+        assert!(!result.stdout.trim().is_empty());
+        executor.cleanup_venv(venv_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_install_packages_docker_venv_noop() {
+        // Docker+venv mode: install_packages is a no-op
+        let temp_dir = "test_docker_venv_noop";
+        let executor = CodeExecutor::new(temp_dir, true, true, "python3").unwrap();
+        let result = executor.install_packages(&["requests".to_string()], None);
+        assert!(result.is_ok());
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }
