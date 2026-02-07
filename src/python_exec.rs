@@ -807,6 +807,12 @@ fn read_pipe<R: std::io::Read>(pipe: Option<R>) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that create real Python virtual environments.
+    /// Parallel `python3 -m venv` calls can interfere with each other on some
+    /// Python distributions (e.g. Anaconda), causing missing symlinks.
+    static VENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Helper: create an executor with Docker disabled, venv disabled (host mode).
     fn host_executor(dir: &str) -> CodeExecutor {
@@ -1059,6 +1065,7 @@ mod tests {
 
     #[test]
     fn test_create_and_cleanup_venv() {
+        let _lock = VENV_LOCK.lock().unwrap();
         // When use_venv is true and Docker is off, create_venv makes a real venv
         let temp_dir = "test_create_cleanup_venv";
         let executor = CodeExecutor::new(temp_dir, false, true, "python3").unwrap();
@@ -1077,6 +1084,7 @@ mod tests {
 
     #[test]
     fn test_execute_in_venv() {
+        let _lock = VENV_LOCK.lock().unwrap();
         // Create a venv, then execute a simple script in it
         let temp_dir = "test_execute_in_venv";
         let executor = CodeExecutor::new(temp_dir, false, true, "python3").unwrap();

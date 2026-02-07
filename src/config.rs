@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
+    pub provider: String,
     pub model: String,
     pub api_url: String,
     pub max_tokens: u32,
@@ -24,6 +25,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            provider: "huggingface".to_string(),
             model: "Qwen/Qwen2.5-Coder-32B-Instruct".to_string(),
             api_url: "https://router.huggingface.co/v1/chat/completions".to_string(),
             max_tokens: 16284,
@@ -74,6 +76,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = AppConfig::default();
+        assert_eq!(cfg.provider, "huggingface");
         assert_eq!(cfg.model, "Qwen/Qwen2.5-Coder-32B-Instruct");
         assert_eq!(cfg.max_tokens, 16284);
         assert_eq!(cfg.temperature, 0.2);

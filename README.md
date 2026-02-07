@@ -12,6 +12,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 
 ### 🎯 Core Functionality
 - **AI-Powered Code Generation**: Uses HuggingFace's Qwen2.5-Coder-32B-Instruct model for high-quality Python code (configurable)
+- **Multi-Provider Support**: Route generation to HuggingFace (cloud), Ollama (local), or any OpenAI-compatible API
 - **Interactive REPL**: Easy-to-use command-line interface with helpful commands
 - **Automatic Code Execution**: Run generated Python scripts directly from the shell
 - **Smart Code Extraction**: Handles markdown-formatted responses and extracts clean Python code
@@ -45,7 +46,8 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 
 - **Rust** (1.80+): [Install Rust](https://rustup.rs/) — requires `LazyLock` support
 - **Python 3**: For executing generated scripts
-- **HuggingFace Token**: Required for API access (free tier available)
+- **HuggingFace Token** (cloud mode): Required for the default HuggingFace provider (free tier available)
+- **Ollama** (local mode, optional): For local/offline LLM inference — [Install Ollama](https://ollama.com/)
 - **Docker** (optional): For sandboxed script execution — [Install Docker](https://docs.docker.com/get-docker/)
 
 ### Installation
@@ -96,6 +98,7 @@ use_docker = true
 | `/stats` | Display session statistics |
 | `/list` | List all previously generated scripts |
 | `/run <filename>` | Execute a previously generated script |
+| `/provider` | Show current LLM provider info |
 
 ### Example Session
 
@@ -200,13 +203,17 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 
 ### Environment Variables
 
-- `HF_TOKEN`: Your HuggingFace API token (required, via `.env` file)
+- `HF_TOKEN`: Your HuggingFace API token (required when `provider = "huggingface"`, via `.env` file)
+- `LLM_API_KEY`: Optional API key for Ollama proxies or OpenAI-compatible providers (via `.env` file)
 
 ### Configuration File (`pymakebot.toml`)
 
 Create an optional `pymakebot.toml` in the project directory or your home directory. All fields are optional — missing fields use defaults:
 
 ```toml
+# LLM Provider: "huggingface" (default), "ollama", or "openai-compatible"
+provider = "huggingface"
+
 # AI model settings
 model = "Qwen/Qwen2.5-Coder-32B-Instruct"
 api_url = "https://router.huggingface.co/v1/chat/completions"
@@ -231,6 +238,25 @@ generated_dir = "generated"
 ```
 
 **Load order**: `./pymakebot.toml` → `~/pymakebot.toml` → built-in defaults
+
+#### Example: Using Ollama (local)
+
+```toml
+provider = "ollama"
+model = "qwen2.5-coder:14b"
+```
+
+No `.env` file or API key needed — just have Ollama running locally. The API URL defaults to `http://localhost:11434/v1/chat/completions`.
+
+#### Example: OpenAI-compatible endpoint
+
+```toml
+provider = "openai-compatible"
+api_url = "https://api.example.com/v1/chat/completions"
+model = "gpt-4o-mini"
+```
+
+Set `LLM_API_KEY` in `.env` if the endpoint requires authentication.
 
 ---
 
@@ -284,7 +310,7 @@ View anytime with `/stats`
 Contributions are welcome! Areas for improvement:
 
 - [x] Implement virtual environment isolation per script
-- [ ] Support for additional AI models (OpenAI, Anthropic, etc.)
+- [x] Support for additional AI models (Ollama, OpenAI-compatible, etc.)
 - [ ] Web UI using Tauri or similar
 - [ ] Support for other programming languages
 

@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crate::api::{self, Message};
+use crate::api::{self, Message, Provider};
 use crate::config::AppConfig;
 use crate::python_exec::{CodeExecutor, ExecutionMode};
 use crate::utils::{extract_python_code, find_char_boundary};
@@ -16,7 +16,7 @@ use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Va
 /// Available slash commands for tab-completion.
 const COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/refine",
-    "/save", "/history", "/stats", "/list", "/run",
+    "/save", "/history", "/stats", "/list", "/run", "/provider",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -160,6 +160,22 @@ fn stop_spinner(handle: &Arc<AtomicBool>) {
 pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
+    // Validate and display the configured provider
+    let provider = match Provider::from_config(&config.provider) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("{} {}", "✗ Invalid provider configuration:".red().bold(), e);
+            return;
+        }
+    };
+    match provider.resolve_api_url(&config.api_url) {
+        Ok(url) => println!("{} {} → {}", "✓ Provider:".green(), provider.display_name().bright_white(), url.dimmed()),
+        Err(e) => {
+            println!("{} {}", "✗ Provider configuration error:".red().bold(), e);
+            return;
+        }
+    }
+
     let executor = CodeExecutor::new(&config.generated_dir, config.use_docker, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let metrics = SessionMetrics::new();
@@ -240,12 +256,26 @@ async fn start_repl_loop(
             println!("  {}        - Show session statistics", "/stats".green());
             println!("  {}         - List all generated scripts", "/list".green());
             println!("  {} <file>  - Execute a previously generated script", "/run".green());
+            println!("  {}     - Show current LLM provider info", "/provider".green());
             println!();
             continue;
         }
 
         if prompt == "/stats" {
             metrics.display();
+            continue;
+        }
+
+        if prompt == "/provider" {
+            if let Ok(p) = Provider::from_config(&config.provider) {
+                println!("\n{}", "LLM Provider Info:".bright_cyan().bold());
+                println!("  {} {}", "Provider:".dimmed(), p.display_name().bright_white());
+                println!("  {}    {}", "Model:".dimmed(), config.model.bright_white());
+                if let Ok(url) = p.resolve_api_url(&config.api_url) {
+                    println!("  {}  {}", "API URL:".dimmed(), url.bright_white());
+                }
+                println!();
+            }
             continue;
         }
 

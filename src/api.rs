@@ -4,6 +4,122 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+// ── Provider abstraction ────────────────────────────────────────────────
+
+/// Supported LLM providers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Provider {
+    /// HuggingFace Inference API (cloud, requires HF_TOKEN).
+    HuggingFace,
+    /// Ollama local server (OpenAI-compatible endpoint, no auth).
+    Ollama,
+    /// Any OpenAI-compatible API (user-supplied URL, optional LLM_API_KEY).
+    OpenAiCompatible,
+}
+
+/// Default HuggingFace API URL — used to detect whether the user explicitly
+/// overrode `api_url` in the config.
+const HF_DEFAULT_URL: &str = "https://router.huggingface.co/v1/chat/completions";
+const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434/v1/chat/completions";
+
+impl Provider {
+    /// Parse the provider string from config into a `Provider` enum.
+    pub fn from_config(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "huggingface" | "hf" => Ok(Self::HuggingFace),
+            "ollama" => Ok(Self::Ollama),
+            "openai-compatible" | "openai" | "custom" => Ok(Self::OpenAiCompatible),
+            other => Err(anyhow!(
+                "Unknown provider '{}'. Supported: huggingface, ollama, openai-compatible",
+                other
+            )),
+        }
+    }
+
+    /// Return the default API URL for this provider.
+    pub fn default_api_url(&self) -> &'static str {
+        match self {
+            Self::HuggingFace => HF_DEFAULT_URL,
+            Self::Ollama => OLLAMA_DEFAULT_URL,
+            Self::OpenAiCompatible => "", // must be configured explicitly
+        }
+    }
+
+    /// Human-readable name for display.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::HuggingFace => "HuggingFace",
+            Self::Ollama => "Ollama (local)",
+            Self::OpenAiCompatible => "OpenAI-compatible",
+        }
+    }
+
+    /// Resolve the effective API URL: use the user-supplied `api_url` if it
+    /// was explicitly overridden; otherwise fall back to the provider default.
+    pub fn resolve_api_url(&self, configured_url: &str) -> Result<String> {
+        // If the configured URL is the HF default but the provider is NOT HF,
+        // the user hasn't customized it — use the provider's own default.
+        if configured_url == HF_DEFAULT_URL && *self != Self::HuggingFace {
+            let default = self.default_api_url();
+            if default.is_empty() {
+                return Err(anyhow!(
+                    "Provider '{}' requires an explicit api_url in pymakebot.toml",
+                    self.display_name()
+                ));
+            }
+            return Ok(default.to_string());
+        }
+        Ok(configured_url.to_string())
+    }
+
+    /// Build the authorization headers for this provider.
+    pub fn auth_headers(&self) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        match self {
+            Self::HuggingFace => {
+                let token = std::env::var("HF_TOKEN")
+                    .context("HF_TOKEN missing in .env — required for HuggingFace provider")?;
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {token}"))
+                        .context("Invalid Bearer token format")?,
+                );
+            }
+            Self::Ollama => {
+                // Ollama requires no authentication by default.
+                // If the user set LLM_API_KEY, honor it (some Ollama proxies use auth).
+                if let Ok(key) = std::env::var("LLM_API_KEY") {
+                    if !key.is_empty() {
+                        headers.insert(
+                            AUTHORIZATION,
+                            HeaderValue::from_str(&format!("Bearer {key}"))
+                                .context("Invalid LLM_API_KEY format")?,
+                        );
+                    }
+                }
+            }
+            Self::OpenAiCompatible => {
+                // Use LLM_API_KEY if available.
+                if let Ok(key) = std::env::var("LLM_API_KEY") {
+                    if !key.is_empty() {
+                        headers.insert(
+                            AUTHORIZATION,
+                            HeaderValue::from_str(&format!("Bearer {key}"))
+                                .context("Invalid LLM_API_KEY format")?,
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(headers)
+    }
+}
+
+// ── Request / Response types (OpenAI chat completions format) ───────────
+
 #[derive(Serialize)]
 struct ChatRequest {
     model: String,
@@ -12,6 +128,9 @@ struct ChatRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Explicitly disable streaming (some Ollama versions default to stream).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -115,13 +234,18 @@ TESTING:\n\
 - Controls must work on first try\n\
 - Game must be FUN - not too hard, not too easy";
 
-/// Generate code with conversation history for multi-turn refinement
+/// Generate code with conversation history for multi-turn refinement.
+///
+/// Routes to the configured provider (HuggingFace, Ollama, or any
+/// OpenAI-compatible endpoint). All providers use the same chat
+/// completions request/response format.
 pub async fn generate_code_with_history(
     messages: Vec<Message>,
     config: &AppConfig,
 ) -> Result<String> {
-    let token = std::env::var("HF_TOKEN")
-        .context("HF_TOKEN missing in .env")?;
+    let provider = Provider::from_config(&config.provider)?;
+    let api_url = provider.resolve_api_url(&config.api_url)?;
+    let headers = provider.auth_headers()?;
 
     // Ensure system message is at the beginning
     let mut full_messages = vec![Message {
@@ -137,15 +261,8 @@ pub async fn generate_code_with_history(
         messages: full_messages,
         max_tokens: Some(config.max_tokens),
         temperature: Some(config.temperature),
+        stream: Some(false), // always disable streaming
     };
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {token}"))
-            .context("Invalid Bearer token format")?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let client = reqwest::Client::new();
 
@@ -159,17 +276,17 @@ pub async fn generate_code_with_history(
         }
 
         let result = client
-            .post(&config.api_url)
+            .post(&api_url)
             .headers(headers.clone())
             .json(&body)
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120))
             .send()
             .await;
 
         let resp = match result {
             Ok(r) => r,
             Err(e) => {
-                last_err = Some(anyhow!("HTTP error to Hugging Face router: {}", e));
+                last_err = Some(anyhow!("HTTP error to {} ({}): {}", provider.display_name(), api_url, e));
                 continue; // network error → retry
             }
         };
@@ -178,17 +295,21 @@ pub async fn generate_code_with_history(
         let text_body = resp
             .text()
             .await
-            .context("Failed to read Hugging Face response")?;
+            .context("Failed to read API response")?;
 
         if status.is_success() {
             let parsed: ChatResponse = serde_json::from_str(&text_body)
-                .context("Failed to parse Hugging Face JSON response")?;
+                .with_context(|| format!(
+                    "Failed to parse {} JSON response. Raw body:\n{}",
+                    provider.display_name(),
+                    &text_body[..text_body.len().min(500)]
+                ))?;
 
             let generated = parsed
                 .choices
                 .first()
                 .map(|choice| choice.message.content.clone())
-                .ok_or_else(|| anyhow!("No choices in Hugging Face response"))?;
+                .ok_or_else(|| anyhow!("No choices in {} response", provider.display_name()))?;
 
             return Ok(generated);
         }
@@ -196,12 +317,12 @@ pub async fn generate_code_with_history(
         // Decide whether to retry based on status code
         let code = status.as_u16();
         if code == 429 || (500..600).contains(&code) {
-            last_err = Some(anyhow!("HuggingFace error {}: {}", status, text_body));
+            last_err = Some(anyhow!("{} error {}: {}", provider.display_name(), status, text_body));
             continue; // rate-limited or server error → retry
         }
 
         // Client errors (400, 401, 403, etc.) — fail fast
-        return Err(anyhow!("HuggingFace error {}: {}", status, text_body));
+        return Err(anyhow!("{} error {}: {}", provider.display_name(), status, text_body));
     }
 
     Err(last_err.unwrap_or_else(|| anyhow!("All retry attempts exhausted")))
@@ -248,6 +369,7 @@ mod tests {
             ],
             max_tokens: Some(100),
             temperature: Some(0.5),
+            stream: Some(false),
         };
 
         let json = serde_json::to_string(&request);
@@ -313,17 +435,87 @@ mod tests {
             messages: vec![],
             max_tokens: None,
             temperature: None,
+            stream: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
         // Optional fields should not appear in JSON when None
         assert!(!json.contains("max_tokens"));
         assert!(!json.contains("temperature"));
+        assert!(!json.contains("stream"));
     }
 
     #[test]
     fn test_system_prompt_not_empty() {
         assert!(!SYSTEM_PROMPT.is_empty());
         assert!(SYSTEM_PROMPT.contains("Python"));
+    }
+
+    // ── Provider tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_provider_from_config_valid() {
+        assert_eq!(Provider::from_config("huggingface").unwrap(), Provider::HuggingFace);
+        assert_eq!(Provider::from_config("hf").unwrap(), Provider::HuggingFace);
+        assert_eq!(Provider::from_config("HuggingFace").unwrap(), Provider::HuggingFace);
+        assert_eq!(Provider::from_config("ollama").unwrap(), Provider::Ollama);
+        assert_eq!(Provider::from_config("Ollama").unwrap(), Provider::Ollama);
+        assert_eq!(Provider::from_config("openai-compatible").unwrap(), Provider::OpenAiCompatible);
+        assert_eq!(Provider::from_config("openai").unwrap(), Provider::OpenAiCompatible);
+        assert_eq!(Provider::from_config("custom").unwrap(), Provider::OpenAiCompatible);
+    }
+
+    #[test]
+    fn test_provider_from_config_invalid() {
+        assert!(Provider::from_config("unknown").is_err());
+        assert!(Provider::from_config("").is_err());
+    }
+
+    #[test]
+    fn test_provider_default_api_url() {
+        assert_eq!(Provider::HuggingFace.default_api_url(), HF_DEFAULT_URL);
+        assert_eq!(Provider::Ollama.default_api_url(), OLLAMA_DEFAULT_URL);
+        assert!(Provider::OpenAiCompatible.default_api_url().is_empty());
+    }
+
+    #[test]
+    fn test_provider_resolve_api_url_explicit_override() {
+        // When user sets a custom URL, all providers use it
+        let custom = "http://my-server:8080/v1/chat/completions";
+        assert_eq!(Provider::HuggingFace.resolve_api_url(custom).unwrap(), custom);
+        assert_eq!(Provider::Ollama.resolve_api_url(custom).unwrap(), custom);
+        assert_eq!(Provider::OpenAiCompatible.resolve_api_url(custom).unwrap(), custom);
+    }
+
+    #[test]
+    fn test_provider_resolve_api_url_auto_defaults() {
+        // When api_url is the HF default but provider is Ollama → use Ollama's URL
+        let resolved = Provider::Ollama.resolve_api_url(HF_DEFAULT_URL).unwrap();
+        assert_eq!(resolved, OLLAMA_DEFAULT_URL);
+
+        // HuggingFace keeps its own default
+        let resolved = Provider::HuggingFace.resolve_api_url(HF_DEFAULT_URL).unwrap();
+        assert_eq!(resolved, HF_DEFAULT_URL);
+    }
+
+    #[test]
+    fn test_provider_resolve_api_url_openai_requires_explicit() {
+        // OpenAI-compatible provider with no explicit URL → error
+        assert!(Provider::OpenAiCompatible.resolve_api_url(HF_DEFAULT_URL).is_err());
+    }
+
+    #[test]
+    fn test_provider_display_name() {
+        assert_eq!(Provider::HuggingFace.display_name(), "HuggingFace");
+        assert_eq!(Provider::Ollama.display_name(), "Ollama (local)");
+        assert_eq!(Provider::OpenAiCompatible.display_name(), "OpenAI-compatible");
+    }
+
+    #[test]
+    fn test_provider_ollama_auth_no_key() {
+        // Ollama should not require any env var when LLM_API_KEY is unset
+        std::env::remove_var("LLM_API_KEY");
+        let headers = Provider::Ollama.auth_headers().unwrap();
+        assert!(!headers.contains_key(AUTHORIZATION));
     }
 }
