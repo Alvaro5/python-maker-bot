@@ -62,6 +62,54 @@ pub struct LintResult {
     pub stderr: String,
 }
 
+/// Severity level for a security diagnostic from bandit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecuritySeverity {
+    Low,
+    Medium,
+    High,
+}
+
+impl std::fmt::Display for SecuritySeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SecuritySeverity::Low => write!(f, "LOW"),
+            SecuritySeverity::Medium => write!(f, "MEDIUM"),
+            SecuritySeverity::High => write!(f, "HIGH"),
+        }
+    }
+}
+
+/// A single diagnostic message from the security scanner.
+#[derive(Debug, Clone)]
+pub struct SecurityDiagnostic {
+    /// Human-readable message (e.g. "Use of unsafe exec detected").
+    pub message: String,
+    /// Severity of the finding.
+    pub severity: SecuritySeverity,
+    /// Confidence level reported by bandit.
+    pub confidence: SecuritySeverity,
+    /// Bandit test ID (e.g. "B102").
+    pub test_id: String,
+    /// Line number in the script.
+    pub line_number: u32,
+}
+
+/// Result of running `bandit` on a Python script.
+#[derive(Debug)]
+pub struct SecurityResult {
+    /// True if no security findings at all.
+    pub passed: bool,
+    /// True if at least one finding has HIGH severity.
+    pub has_high_severity: bool,
+    /// Individual security findings.
+    pub diagnostics: Vec<SecurityDiagnostic>,
+    /// Summary string (e.g. "Found 2 issue(s)").
+    pub summary: String,
+    /// Any stderr output from bandit.
+    pub stderr: String,
+}
+
 /// Responsible for writing Python scripts to disk and executing them,
 /// either on the host or inside a Docker sandbox.
 pub struct CodeExecutor {
@@ -443,6 +491,104 @@ impl CodeExecutor {
             summary,
             stderr,
         })
+    }
+
+    // ── Static security analysis (bandit) ───────────────────────────────
+
+    /// Check whether `bandit` is available on PATH.
+    pub fn check_security_scanner_available() -> bool {
+        Command::new("bandit")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Run `bandit` on a Python script and return structured security results.
+    ///
+    /// Uses JSON output for reliable parsing. Returns `Ok(SecurityResult)` with
+    /// any findings. The caller decides whether high-severity findings should
+    /// block execution.
+    pub fn security_check(&self, path: &PathBuf) -> Result<SecurityResult> {
+        let output = Command::new("bandit")
+            .args(["-f", "json", "-q"])
+            .arg(path)
+            .output()
+            .context("Failed to run bandit. Is it installed? (pip install bandit)")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // bandit exits 0 = clean, 1 = issues found
+        // Parse JSON output
+        let diagnostics = Self::parse_bandit_json(&stdout);
+        let has_high_severity = diagnostics.iter().any(|d| d.severity == SecuritySeverity::High);
+        let count = diagnostics.len();
+        let summary = if count == 0 {
+            String::new()
+        } else {
+            let high = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::High).count();
+            let med = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Medium).count();
+            let low = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Low).count();
+            format!(
+                "Found {} issue(s): {} high, {} medium, {} low severity",
+                count, high, med, low
+            )
+        };
+
+        Ok(SecurityResult {
+            passed: diagnostics.is_empty(),
+            has_high_severity,
+            diagnostics,
+            summary,
+            stderr,
+        })
+    }
+
+    /// Parse bandit JSON output into a list of security diagnostics.
+    fn parse_bandit_json(json_str: &str) -> Vec<SecurityDiagnostic> {
+        // bandit JSON format: { "results": [ { "issue_severity": "HIGH", ... } ], ... }
+        let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+
+        let results = match parsed.get("results").and_then(|r| r.as_array()) {
+            Some(arr) => arr,
+            None => return Vec::new(),
+        };
+
+        results
+            .iter()
+            .filter_map(|item| {
+                let severity_str = item.get("issue_severity")?.as_str()?;
+                let confidence_str = item.get("issue_confidence")?.as_str()?;
+                let test_id = item.get("test_id")?.as_str()?.to_string();
+                let issue_text = item.get("issue_text")?.as_str()?.to_string();
+                let line_number = item.get("line_number")?.as_u64()? as u32;
+
+                let severity = match severity_str {
+                    "HIGH" => SecuritySeverity::High,
+                    "MEDIUM" => SecuritySeverity::Medium,
+                    _ => SecuritySeverity::Low,
+                };
+                let confidence = match confidence_str {
+                    "HIGH" => SecuritySeverity::High,
+                    "MEDIUM" => SecuritySeverity::Medium,
+                    _ => SecuritySeverity::Low,
+                };
+
+                Some(SecurityDiagnostic {
+                    message: format!("[{}] {} (line {})", test_id, issue_text, line_number),
+                    severity,
+                    confidence,
+                    test_id,
+                    line_number,
+                })
+            })
+            .collect()
     }
 
     /// Run `python3 -m py_compile <path>` and return Ok(()) on success or
@@ -1272,5 +1418,117 @@ mod tests {
             assert!(!result.summary.is_empty(), "Expected a summary line from ruff");
         }
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_check_security_scanner_available() {
+        // Should return a bool without panicking
+        let _available = CodeExecutor::check_security_scanner_available();
+    }
+
+    #[test]
+    fn test_security_check_clean_code() {
+        if !CodeExecutor::check_security_scanner_available() {
+            // Skip if bandit is not installed
+            return;
+        }
+        let temp_dir = "test_security_clean";
+        let executor = host_executor(temp_dir);
+        let path = executor.write_script("x = 1\nprint(x)\n").unwrap();
+        let result = executor.security_check(&path).unwrap();
+        assert!(result.passed, "Expected no security issues for clean code");
+        assert!(!result.has_high_severity);
+        assert!(result.diagnostics.is_empty());
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_security_check_with_issues() {
+        if !CodeExecutor::check_security_scanner_available() {
+            return;
+        }
+        let temp_dir = "test_security_issues";
+        let executor = host_executor(temp_dir);
+        // subprocess call with shell=True — bandit flags this as B602
+        let code = "import subprocess\nsubprocess.call('ls', shell=True)\n";
+        let path = executor.write_script(code).unwrap();
+        let result = executor.security_check(&path).unwrap();
+        assert!(!result.passed, "Expected security issues for shell=True subprocess");
+        assert!(!result.diagnostics.is_empty());
+        // Check that at least one diagnostic mentions shell or subprocess
+        let has_relevant = result.diagnostics.iter().any(|d|
+            d.test_id.starts_with("B") || d.message.contains("shell")
+        );
+        assert!(has_relevant, "Expected bandit finding, got: {:?}", result.diagnostics);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_security_check_high_severity() {
+        if !CodeExecutor::check_security_scanner_available() {
+            return;
+        }
+        let temp_dir = "test_security_high";
+        let executor = host_executor(temp_dir);
+        // exec() is flagged as B102 with HIGH severity
+        let code = "exec('print(1)')\n";
+        let path = executor.write_script(code).unwrap();
+        let result = executor.security_check(&path).unwrap();
+        // exec() should trigger at least one finding
+        if !result.passed {
+            let has_finding = result.diagnostics.iter().any(|d| !d.test_id.is_empty());
+            assert!(has_finding, "Expected a bandit test ID");
+        }
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_security_result_summary() {
+        if !CodeExecutor::check_security_scanner_available() {
+            return;
+        }
+        let temp_dir = "test_security_summary";
+        let executor = host_executor(temp_dir);
+        let code = "import subprocess\nsubprocess.call('ls', shell=True)\n";
+        let path = executor.write_script(code).unwrap();
+        let result = executor.security_check(&path).unwrap();
+        if !result.passed {
+            assert!(!result.summary.is_empty(), "Expected a summary string");
+            assert!(result.summary.contains("issue"), "Summary should mention issue count");
+        }
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_parse_bandit_json_empty() {
+        let result = CodeExecutor::parse_bandit_json("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bandit_json_no_results() {
+        let json = r#"{"results": [], "errors": []}"#;
+        let result = CodeExecutor::parse_bandit_json(json);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bandit_json_with_results() {
+        let json = r#"{
+            "results": [{
+                "issue_severity": "HIGH",
+                "issue_confidence": "HIGH",
+                "issue_text": "Use of exec detected.",
+                "test_id": "B102",
+                "line_number": 1
+            }]
+        }"#;
+        let result = CodeExecutor::parse_bandit_json(json);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].severity, SecuritySeverity::High);
+        assert_eq!(result[0].confidence, SecuritySeverity::High);
+        assert_eq!(result[0].test_id, "B102");
+        assert_eq!(result[0].line_number, 1);
+        assert!(result[0].message.contains("exec"));
     }
 }

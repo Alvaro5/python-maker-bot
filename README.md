@@ -2,7 +2,7 @@
 
 **An AI-Powered Python Code Generator Built with Rust**
 
-> 🔒 Docker sandboxing, virtual-env isolation, multi-provider LLM support, and ruff-powered linting — all built in!
+> 🔒 Docker sandboxing, virtual-env isolation, multi-provider LLM support, ruff linting, and bandit security scanning — all built in!
 
 A Rust-based interactive shell that leverages AI language models to generate, refine, and execute Python code on demand. This agentic tool helps you quickly prototype Python scripts with conversational AI assistance.
 
@@ -24,6 +24,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **Virtual Environment Isolation** 🐍: Each script runs in a temporary venv to avoid polluting the system Python (host & Docker)
 - **Syntax Check & Auto-Refine**: Validates code with `py_compile` before execution; offers to auto-fix syntax errors via AI
 - **Static Analysis (Linting)** 🔍: Runs `ruff` on generated code to catch quality issues before execution; offers auto-refine on lint errors
+- **Security Scanning** 🛡️: Runs `bandit` as a pre-flight security check to detect unsafe patterns (e.g. `exec()`, `shell=True`) before execution
 - **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
 - **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
 - **Conversation History Limit**: Automatically trims old messages to keep context manageable
@@ -51,6 +52,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **Ollama** (local mode, optional): For local/offline LLM inference — [Install Ollama](https://ollama.com/)
 - **Docker** (optional): For sandboxed script execution — [Install Docker](https://docs.docker.com/get-docker/)
 - **ruff** (optional): For static analysis / linting of generated code — `pip install ruff`
+- **bandit** (optional): For pre-flight security scanning of generated code — `pip install bandit`
 
 ### Installation
 
@@ -102,6 +104,7 @@ use_docker = true
 | `/run <filename>` | Execute a previously generated script |
 | `/provider` | Show current LLM provider info |
 | `/lint` | Lint the last generated code with ruff |
+| `/security` | Run security scan (bandit) on last code |
 
 ### Example Session
 
@@ -229,7 +232,7 @@ execution_timeout_secs = 30    # Kill scripts after this many seconds (0 = no ti
 auto_install_deps = false      # Auto-install detected dependencies without prompting
 use_docker = false             # Run scripts inside Docker sandbox (requires: docker build -t python-sandbox .)
 use_venv = true                # Isolate each execution in a temporary Python virtual environment
-use_linting = true             # Run ruff lint check on generated code before execution
+use_linting = true             # Run ruff lint check on generated code before execution\nuse_security_check = true      # Run bandit security scan on generated code before execution
 
 # API resilience
 max_retries = 3                # Retry on network errors, 429, and 5xx responses
@@ -300,6 +303,7 @@ View anytime with `/stats`
 - **Docker sandbox**: Runs scripts in an isolated container with no network access and read-only script mount
 - **Virtual environment isolation**: Temp venv per execution prevents dependency pollution (host & Docker)
 - **Static analysis**: `ruff` lint check catches code quality issues and unused imports before execution
+- **Security scanning**: `bandit` pre-flight scan detects unsafe patterns (`exec()`, `shell=True`, hardcoded passwords, etc.) and blocks HIGH-severity findings
 - Syntax check via `py_compile` before execution catches errors early
 - Execution timeout prevents runaway scripts
 - Dependency detection warns about non-standard imports before install
@@ -318,6 +322,7 @@ Contributions are welcome! Areas for improvement:
 - [x] Implement virtual environment isolation per script
 - [x] Support for additional AI models (Ollama, OpenAI-compatible, etc.)
 - [x] Static analysis / linting with ruff
+- [x] Pre-flight security scanning with bandit
 - [ ] Web UI using Tauri or similar
 - [ ] Support for other programming languages
 
@@ -411,13 +416,17 @@ MIT License - see LICENSE file for details
   - Runs `ruff check` after syntax check, displays colored diagnostics
   - Offers auto-refine on lint errors, `/lint` REPL command for on-demand checks
   - Gracefully skipped if `ruff` is not installed
-- 🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
+- �️ **Security Scanning**: Bandit-powered pre-flight security analysis (`use_security_check = true`, on by default)
+  - Runs `bandit -f json` after lint check, parses findings with severity (LOW/MEDIUM/HIGH)
+  - Blocks execution on HIGH-severity findings (with user override), `/security` REPL command
+  - Gracefully skipped if `bandit` is not installed
+- �🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
 - 🔁 **API Retry**: Exponential backoff with jitter on network errors, 429, and 5xx
 - ⏱️ **Execution Timeout**: Configurable timeout kills runaway scripts in Captured mode
 - ✅ **Syntax Check**: Pre-execution validation via `py_compile` with auto-refine on errors
 - 📏 **History Limit**: Automatic trimming of conversation history to configured max
 - 🐛 **Bug Fixes**: UTF-8 safe string slicing, correct success detection (`exit_code == 0`), cached regex compilation
-- 🧹 **Code Quality**: Zero clippy warnings, 87 tests (80 unit + 7 integration)
+- 🧹 **Code Quality**: Zero clippy warnings, 95 tests (88 unit + 7 integration)
 
 ### v0.2.1 (December 2025)
 - 🎮 **Interactive Mode**: Automatic detection for pygame, input(), tkinter, GUIs

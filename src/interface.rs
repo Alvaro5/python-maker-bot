@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use crate::api::{self, Message, Provider};
 use crate::config::AppConfig;
-use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity};
+use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity, SecuritySeverity};
 use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
 use colored::*;
@@ -16,7 +16,7 @@ use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Va
 /// Available slash commands for tab-completion.
 const COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/refine",
-    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint",
+    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint", "/security",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -198,6 +198,20 @@ pub async fn start_repl(config: &AppConfig) {
         false
     };
 
+    // Check security scanner (bandit) availability
+    let security_scanner_available = if config.use_security_check {
+        if CodeExecutor::check_security_scanner_available() {
+            println!("{}", "✓ Security scanning enabled (bandit detected).".green());
+            true
+        } else {
+            println!("{}", "⚠️  Security scanning enabled but bandit not found. Install with: pip install bandit".yellow());
+            println!("{}", "  Security scanning will be skipped until bandit is installed.".dimmed());
+            false
+        }
+    } else {
+        false
+    };
+
     // If Docker mode is enabled, verify Docker is available
     if config.use_docker {
         match CodeExecutor::check_docker_available() {
@@ -209,12 +223,12 @@ pub async fn start_repl(config: &AppConfig) {
                 // Recreate executor without Docker
                 // (we can't mutate executor, so shadow it)
                 let executor = CodeExecutor::new(&config.generated_dir, false, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
-                return start_repl_loop(config, executor, logger, metrics, linter_available).await;
+                return start_repl_loop(config, executor, logger, metrics, linter_available, security_scanner_available).await;
             }
         }
     }
 
-    start_repl_loop(config, executor, logger, metrics, linter_available).await;
+    start_repl_loop(config, executor, logger, metrics, linter_available, security_scanner_available).await;
 }
 
 async fn start_repl_loop(
@@ -223,6 +237,7 @@ async fn start_repl_loop(
     logger: Logger,
     mut metrics: SessionMetrics,
     linter_available: bool,
+    security_scanner_available: bool,
 ) {
     // Set up rustyline editor with tab-completion
     let rl_config = Config::builder()
@@ -273,6 +288,7 @@ async fn start_repl_loop(
             println!("  {} <file>  - Execute a previously generated script", "/run".green());
             println!("  {}     - Show current LLM provider info", "/provider".green());
             println!("  {}         - Lint the last generated code with ruff", "/lint".green());
+            println!("  {}     - Run security scan (bandit) on last code", "/security".green());
             println!();
             continue;
         }
@@ -314,6 +330,28 @@ async fn start_repl_loop(
                     }
                 }
                 Err(e) => println!("{} {}", "✗ Failed to write script for linting:".red(), e),
+            }
+            continue;
+        }
+
+        // /security command — run bandit on the last generated code
+        if prompt == "/security" {
+            if last_generated_code.is_empty() {
+                println!("{}", "No code to scan. Generate some code first!".yellow());
+                continue;
+            }
+            if !security_scanner_available {
+                println!("{}", "Security scanner (bandit) is not available. Install with: pip install bandit".yellow());
+                continue;
+            }
+            match executor.write_script(&last_generated_code) {
+                Ok(path) => {
+                    match executor.security_check(&path) {
+                        Ok(sec_result) => display_security_results(&sec_result),
+                        Err(e) => println!("{} {}", "✗ Security scan error:".red(), e),
+                    }
+                }
+                Err(e) => println!("{} {}", "✗ Failed to write script for scanning:".red(), e),
             }
             continue;
         }
@@ -689,6 +727,24 @@ async fn start_repl_loop(
                     }
                 }
 
+                // Run security check (bandit) if available
+                if security_scanner_available {
+                    match executor.security_check(&script_path) {
+                        Ok(sec_result) => {
+                            display_security_results(&sec_result);
+                            if sec_result.has_high_severity
+                                && !confirm("HIGH severity security issues found. Proceed anyway?")
+                            {
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            println!("{} {}", "⚠️  Security scan failed:".yellow(), e);
+                            println!("{}", "Proceeding without security scanning...".dimmed());
+                        }
+                    }
+                }
+
                 if confirm("Execute this script?") {
                     // Create a venv for this execution (host mode only)
                     let venv = executor.create_venv().unwrap_or_else(|e| {
@@ -871,5 +927,32 @@ fn display_lint_results(result: &crate::python_exec::LintResult) {
         println!("\n{}", result.summary.dimmed());
     }
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_yellow());
+}
+
+/// Display security scan results with colored output.
+fn display_security_results(result: &crate::python_exec::SecurityResult) {
+    if result.passed {
+        println!("{}", "✓ Security scan passed — no issues found.".green());
+        return;
+    }
+
+    println!("\n{}", "━━━━━━━━━━ Security Scan Results ━━━━━━━━━━".bright_red().bold());
+    for diag in &result.diagnostics {
+        let icon = match diag.severity {
+            SecuritySeverity::High => "  ✗".red().bold(),
+            SecuritySeverity::Medium => "  ⚠".yellow(),
+            SecuritySeverity::Low => "  ℹ".dimmed(),
+        };
+        let sev_label = match diag.severity {
+            SecuritySeverity::High => format!("[{}]", diag.severity).red().bold().to_string(),
+            SecuritySeverity::Medium => format!("[{}]", diag.severity).yellow().to_string(),
+            SecuritySeverity::Low => format!("[{}]", diag.severity).dimmed().to_string(),
+        };
+        println!("{} {} {}", icon, sev_label, diag.message);
+    }
+    if !result.summary.is_empty() {
+        println!("\n{}", result.summary.dimmed());
+    }
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_red());
 }
 

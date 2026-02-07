@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub use_docker: bool,
     pub use_venv: bool,
     pub use_linting: bool,
+    pub use_security_check: bool,
     pub log_dir: String,
     pub generated_dir: String,
     pub python_executable: String,
@@ -38,6 +39,7 @@ impl Default for AppConfig {
             use_docker: false,
             use_venv: true,
             use_linting: true,
+            use_security_check: true,
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
             python_executable: "python3".to_string(),
@@ -89,6 +91,7 @@ mod tests {
         assert!(!cfg.use_docker);
         assert!(cfg.use_venv);
         assert!(cfg.use_linting);
+        assert!(cfg.use_security_check);
         assert_eq!(cfg.log_dir, "logs");
         assert_eq!(cfg.python_executable, "python3");
         assert_eq!(cfg.generated_dir, "generated");
@@ -121,6 +124,7 @@ mod tests {
             max_retries = 5
             use_docker = true
             use_linting = false
+            use_security_check = false
             log_dir = "my_logs"
             generated_dir = "my_scripts"
             python_executable = "python"
@@ -136,6 +140,7 @@ mod tests {
         assert_eq!(cfg.max_retries, 5);
         assert!(cfg.use_docker);
         assert!(!cfg.use_linting);
+        assert!(!cfg.use_security_check);
         assert_eq!(cfg.log_dir, "my_logs");
         assert_eq!(cfg.generated_dir, "my_scripts");
     }
