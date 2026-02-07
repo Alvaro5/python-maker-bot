@@ -33,6 +33,35 @@ impl CodeExecutionResult {
     }
 }
 
+/// Severity level for a lint diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LintSeverity {
+    Warning,
+    Error,
+}
+
+/// A single diagnostic message from the linter.
+#[derive(Debug, Clone)]
+pub struct LintDiagnostic {
+    pub message: String,
+    pub severity: LintSeverity,
+}
+
+/// Result of running `ruff check` on a Python script.
+#[derive(Debug)]
+pub struct LintResult {
+    /// True if no diagnostics at all.
+    pub passed: bool,
+    /// True if at least one diagnostic is an error (E/F rules).
+    pub has_errors: bool,
+    /// Individual diagnostic messages.
+    pub diagnostics: Vec<LintDiagnostic>,
+    /// Summary line from ruff (e.g. "Found 3 errors.").
+    pub summary: String,
+    /// Stderr output from ruff (internal errors, if any).
+    pub stderr: String,
+}
+
 /// Responsible for writing Python scripts to disk and executing them,
 /// either on the host or inside a Docker sandbox.
 pub struct CodeExecutor {
@@ -351,6 +380,69 @@ impl CodeExecutor {
         fs::write(&script_path, code)
             .with_context(|| format!("Could not write the script {:?}", script_path))?;
         Ok(script_path)
+    }
+
+    // ── Static analysis (linting) ───────────────────────────────────────
+
+    /// Check whether `ruff` is available on PATH.
+    pub fn check_linter_available() -> bool {
+        Command::new("ruff")
+            .arg("version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Run `ruff check` on a Python script and return structured results.
+    ///
+    /// Returns `Ok(LintResult)` with any diagnostics found.
+    /// The caller decides whether warnings should block execution.
+    pub fn lint_check(&self, path: &PathBuf) -> Result<LintResult> {
+        let output = Command::new("ruff")
+            .args(["check", "--output-format=concise", "--no-fix"])
+            .arg(path)
+            .output()
+            .context("Failed to run ruff. Is it installed? (pip install ruff)")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // ruff exits 0 = clean, 1 = issues found, 2 = internal error
+        let diagnostics: Vec<LintDiagnostic> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with("Found "))
+            .map(|line| {
+                // Try to parse severity from the rule code (E = error, W = warning, etc.)
+                let severity = if line.contains(" F") || line.contains(" E") {
+                    LintSeverity::Error
+                } else {
+                    LintSeverity::Warning
+                };
+                LintDiagnostic {
+                    message: line.to_string(),
+                    severity,
+                }
+            })
+            .collect();
+
+        let has_errors = diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
+
+        // Capture the "Found N ..." summary line if present
+        let summary = stdout
+            .lines()
+            .find(|line| line.starts_with("Found "))
+            .unwrap_or("")
+            .to_string();
+
+        Ok(LintResult {
+            passed: diagnostics.is_empty(),
+            has_errors,
+            diagnostics,
+            summary,
+            stderr,
+        })
     }
 
     /// Run `python3 -m py_compile <path>` and return Ok(()) on success or
@@ -1107,6 +1199,78 @@ mod tests {
         let executor = CodeExecutor::new(temp_dir, true, true, "python3").unwrap();
         let result = executor.install_packages(&["requests".to_string()], None);
         assert!(result.is_ok());
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_check_linter_available() {
+        // Should return a bool without panicking
+        let _available = CodeExecutor::check_linter_available();
+    }
+
+    #[test]
+    fn test_lint_check_clean_code() {
+        if !CodeExecutor::check_linter_available() {
+            // Skip if ruff is not installed
+            return;
+        }
+        let temp_dir = "test_lint_clean";
+        let executor = host_executor(temp_dir);
+        let path = executor.write_script("x = 1\nprint(x)\n").unwrap();
+        let result = executor.lint_check(&path).unwrap();
+        assert!(result.passed);
+        assert!(!result.has_errors);
+        assert!(result.diagnostics.is_empty());
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_lint_check_with_issues() {
+        if !CodeExecutor::check_linter_available() {
+            return;
+        }
+        let temp_dir = "test_lint_issues";
+        let executor = host_executor(temp_dir);
+        // Import os but never use it — ruff should flag F401 (unused import)
+        let path = executor.write_script("import os\nprint('hello')\n").unwrap();
+        let result = executor.lint_check(&path).unwrap();
+        assert!(!result.passed, "Expected lint issues for unused import");
+        assert!(!result.diagnostics.is_empty());
+        // Check that at least one diagnostic mentions F401 or the unused import
+        let has_unused = result.diagnostics.iter().any(|d| d.message.contains("F401") || d.message.contains("unused"));
+        assert!(has_unused, "Expected F401 unused import diagnostic, got: {:?}", result.diagnostics);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_lint_check_severity_error() {
+        if !CodeExecutor::check_linter_available() {
+            return;
+        }
+        let temp_dir = "test_lint_severity";
+        let executor = host_executor(temp_dir);
+        // Undefined name (F821) is an error-level diagnostic
+        let path = executor.write_script("print(undefined_variable)\n").unwrap();
+        let result = executor.lint_check(&path).unwrap();
+        assert!(result.has_errors, "Expected lint errors for undefined name");
+        let has_f_error = result.diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
+        assert!(has_f_error);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_lint_result_summary() {
+        if !CodeExecutor::check_linter_available() {
+            return;
+        }
+        let temp_dir = "test_lint_summary";
+        let executor = host_executor(temp_dir);
+        let path = executor.write_script("import os\nimport sys\nprint('hello')\n").unwrap();
+        let result = executor.lint_check(&path).unwrap();
+        if !result.passed {
+            // ruff prints "Found N error(s)." summary
+            assert!(!result.summary.is_empty(), "Expected a summary line from ruff");
+        }
         let _ = fs::remove_dir_all(temp_dir);
     }
 }

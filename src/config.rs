@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub max_retries: u32,
     pub use_docker: bool,
     pub use_venv: bool,
+    pub use_linting: bool,
     pub log_dir: String,
     pub generated_dir: String,
     pub python_executable: String,
@@ -36,6 +37,7 @@ impl Default for AppConfig {
             max_retries: 3,
             use_docker: false,
             use_venv: true,
+            use_linting: true,
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
             python_executable: "python3".to_string(),
@@ -86,6 +88,7 @@ mod tests {
         assert_eq!(cfg.max_retries, 3);
         assert!(!cfg.use_docker);
         assert!(cfg.use_venv);
+        assert!(cfg.use_linting);
         assert_eq!(cfg.log_dir, "logs");
         assert_eq!(cfg.python_executable, "python3");
         assert_eq!(cfg.generated_dir, "generated");
@@ -117,6 +120,7 @@ mod tests {
             max_history_messages = 10
             max_retries = 5
             use_docker = true
+            use_linting = false
             log_dir = "my_logs"
             generated_dir = "my_scripts"
             python_executable = "python"
@@ -131,6 +135,7 @@ mod tests {
         assert_eq!(cfg.max_history_messages, 10);
         assert_eq!(cfg.max_retries, 5);
         assert!(cfg.use_docker);
+        assert!(!cfg.use_linting);
         assert_eq!(cfg.log_dir, "my_logs");
         assert_eq!(cfg.generated_dir, "my_scripts");
     }

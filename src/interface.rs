@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use crate::api::{self, Message, Provider};
 use crate::config::AppConfig;
-use crate::python_exec::{CodeExecutor, ExecutionMode};
+use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity};
 use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
 use colored::*;
@@ -16,7 +16,7 @@ use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Va
 /// Available slash commands for tab-completion.
 const COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/refine",
-    "/save", "/history", "/stats", "/list", "/run", "/provider",
+    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -180,6 +180,24 @@ pub async fn start_repl(config: &AppConfig) {
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let metrics = SessionMetrics::new();
 
+    if config.use_venv {
+        println!("{}", "✓ Virtual environment isolation enabled.".green());
+    }
+
+    // Check linter availability
+    let linter_available = if config.use_linting {
+        if CodeExecutor::check_linter_available() {
+            println!("{}", "✓ Linting enabled (ruff detected).".green());
+            true
+        } else {
+            println!("{}", "⚠️  Linting enabled but ruff not found. Install with: pip install ruff".yellow());
+            println!("{}", "  Linting will be skipped until ruff is installed.".dimmed());
+            false
+        }
+    } else {
+        false
+    };
+
     // If Docker mode is enabled, verify Docker is available
     if config.use_docker {
         match CodeExecutor::check_docker_available() {
@@ -191,16 +209,12 @@ pub async fn start_repl(config: &AppConfig) {
                 // Recreate executor without Docker
                 // (we can't mutate executor, so shadow it)
                 let executor = CodeExecutor::new(&config.generated_dir, false, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
-                return start_repl_loop(config, executor, logger, metrics).await;
+                return start_repl_loop(config, executor, logger, metrics, linter_available).await;
             }
         }
     }
 
-    if config.use_venv {
-        println!("{}", "✓ Virtual environment isolation enabled.".green());
-    }
-
-    start_repl_loop(config, executor, logger, metrics).await;
+    start_repl_loop(config, executor, logger, metrics, linter_available).await;
 }
 
 async fn start_repl_loop(
@@ -208,6 +222,7 @@ async fn start_repl_loop(
     executor: CodeExecutor,
     logger: Logger,
     mut metrics: SessionMetrics,
+    linter_available: bool,
 ) {
     // Set up rustyline editor with tab-completion
     let rl_config = Config::builder()
@@ -257,6 +272,7 @@ async fn start_repl_loop(
             println!("  {}         - List all generated scripts", "/list".green());
             println!("  {} <file>  - Execute a previously generated script", "/run".green());
             println!("  {}     - Show current LLM provider info", "/provider".green());
+            println!("  {}         - Lint the last generated code with ruff", "/lint".green());
             println!();
             continue;
         }
@@ -275,6 +291,29 @@ async fn start_repl_loop(
                     println!("  {}  {}", "API URL:".dimmed(), url.bright_white());
                 }
                 println!();
+            }
+            continue;
+        }
+
+        // /lint command — run ruff on the last generated code
+        if prompt == "/lint" {
+            if last_generated_code.is_empty() {
+                println!("{}", "No code to lint. Generate some code first!".yellow());
+                continue;
+            }
+            if !linter_available {
+                println!("{}", "Linter (ruff) is not available. Install with: pip install ruff".yellow());
+                continue;
+            }
+            // Write to a temp file for linting
+            match executor.write_script(&last_generated_code) {
+                Ok(path) => {
+                    match executor.lint_check(&path) {
+                        Ok(lint_result) => display_lint_results(&lint_result),
+                        Err(e) => println!("{} {}", "✗ Lint error:".red(), e),
+                    }
+                }
+                Err(e) => println!("{} {}", "✗ Failed to write script for linting:".red(), e),
             }
             continue;
         }
@@ -578,6 +617,78 @@ async fn start_repl_loop(
                     }
                 }
 
+                // Run lint check (ruff) if available
+                if linter_available {
+                    match executor.lint_check(&script_path) {
+                        Ok(lint_result) => {
+                            display_lint_results(&lint_result);
+                            if lint_result.has_errors {
+                                if confirm("Auto-refine to fix lint errors?") {
+                                    // Build a lint error summary for the LLM
+                                    let lint_issues: String = lint_result.diagnostics
+                                        .iter()
+                                        .map(|d| d.message.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    conversation_history.push(Message {
+                                        role: "user".to_string(),
+                                        content: format!(
+                                            "The code has the following lint issues (from ruff). Please fix them:\n{}",
+                                            lint_issues
+                                        ),
+                                    });
+                                    metrics.total_requests += 1;
+                                    let _ = logger.log_api_request(&format!("Auto-refine lint: {}", lint_issues));
+
+                                    let spinner = start_spinner("Auto-refining code...");
+                                    let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                                    stop_spinner(&spinner);
+
+                                    match api_result {
+                                        Ok(raw_response) => {
+                                            let _ = logger.log_api_response(&raw_response);
+                                            let fixed_code = extract_python_code(&raw_response);
+                                            last_generated_code = fixed_code.clone();
+
+                                            conversation_history.push(Message {
+                                                role: "assistant".to_string(),
+                                                content: fixed_code.clone(),
+                                            });
+                                            trim_history(&mut conversation_history, config.max_history_messages);
+
+                                            display_code(&fixed_code);
+
+                                            if let Err(e) = fs::write(&script_path, &fixed_code) {
+                                                println!("{} {}", "✗ Failed to write fixed script:".red(), e);
+                                                continue;
+                                            }
+
+                                            // Re-check syntax after lint fix
+                                            if let Err(syn_err) = executor.syntax_check(&script_path) {
+                                                println!("{} {}", "✗ Fixed code has syntax errors:".red(), syn_err);
+                                                continue;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            metrics.api_errors += 1;
+                                            let _ = logger.log_error(&format!("API error during lint auto-refine: {}", e));
+                                            println!("{} {}", "✗ API error during auto-refine:".red(), e);
+                                            conversation_history.pop();
+                                            continue;
+                                        }
+                                    }
+                                } else if !confirm("Proceed with execution despite lint errors?") {
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("{} {}", "⚠️  Lint check failed:".yellow(), e);
+                            println!("{}", "Proceeding without linting...".dimmed());
+                        }
+                    }
+                }
+
                 if confirm("Execute this script?") {
                     // Create a venv for this execution (host mode only)
                     let venv = executor.create_venv().unwrap_or_else(|e| {
@@ -739,5 +850,26 @@ async fn start_repl_loop(
     // Display session statistics on exit
     println!("\n{}", "Session ended.".bright_cyan());
     metrics.display();
+}
+
+/// Display lint results with colored output.
+fn display_lint_results(result: &crate::python_exec::LintResult) {
+    if result.passed {
+        println!("{}", "✓ Lint check passed — no issues found.".green());
+        return;
+    }
+
+    println!("\n{}", "━━━━━━━━━━━━ Lint Results ━━━━━━━━━━━━".bright_yellow().bold());
+    for diag in &result.diagnostics {
+        let icon = match diag.severity {
+            LintSeverity::Error => "  ✗".red().bold(),
+            LintSeverity::Warning => "  ⚠".yellow(),
+        };
+        println!("{} {}", icon, diag.message);
+    }
+    if !result.summary.is_empty() {
+        println!("\n{}", result.summary.dimmed());
+    }
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_yellow());
 }
 

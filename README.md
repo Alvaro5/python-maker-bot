@@ -1,8 +1,8 @@
-# 🤖 Python Maker Bot v0.2.1
+# 🤖 Python Maker Bot v0.2.2
 
 **An AI-Powered Python Code Generator Built with Rust**
 
-> 🎮 Now with Interactive Mode for games, GUIs, and programs requiring user input!
+> 🔒 Docker sandboxing, virtual-env isolation, multi-provider LLM support, and ruff-powered linting — all built in!
 
 A Rust-based interactive shell that leverages AI language models to generate, refine, and execute Python code on demand. This agentic tool helps you quickly prototype Python scripts with conversational AI assistance.
 
@@ -23,6 +23,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **Docker Sandbox** 🐳: Optionally execute AI-generated code inside an isolated Docker container for security
 - **Virtual Environment Isolation** 🐍: Each script runs in a temporary venv to avoid polluting the system Python (host & Docker)
 - **Syntax Check & Auto-Refine**: Validates code with `py_compile` before execution; offers to auto-fix syntax errors via AI
+- **Static Analysis (Linting)** 🔍: Runs `ruff` on generated code to catch quality issues before execution; offers auto-refine on lint errors
 - **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
 - **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
 - **Conversation History Limit**: Automatically trims old messages to keep context manageable
@@ -49,13 +50,14 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **HuggingFace Token** (cloud mode): Required for the default HuggingFace provider (free tier available)
 - **Ollama** (local mode, optional): For local/offline LLM inference — [Install Ollama](https://ollama.com/)
 - **Docker** (optional): For sandboxed script execution — [Install Docker](https://docs.docker.com/get-docker/)
+- **ruff** (optional): For static analysis / linting of generated code — `pip install ruff`
 
 ### Installation
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/Ali-Gatorre/Rust_project.git
-cd Rust_project
+git clone https://github.com/Alvaro5/python-maker-bot.git
+cd python-maker-bot
 ```
 
 2. **Set up HuggingFace Token**:
@@ -99,6 +101,7 @@ use_docker = true
 | `/list` | List all previously generated scripts |
 | `/run <filename>` | Execute a previously generated script |
 | `/provider` | Show current LLM provider info |
+| `/lint` | Lint the last generated code with ruff |
 
 ### Example Session
 
@@ -170,9 +173,10 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 ├── src/
 │   ├── main.rs          # Entry point; loads .env and config
 │   ├── config.rs        # AppConfig with TOML deserialization
-│   ├── api.rs           # HuggingFace API client with retry/backoff
-│   ├── interface.rs     # Interactive REPL with syntax check and auto-refine
-│   ├── python_exec.rs   # Python execution engine with timeout, venv & Docker sandbox
+│   ├── lib.rs           # Library entrypoint and re-exports
+│   ├── api.rs           # Multi-provider LLM client (HuggingFace, Ollama, OpenAI-compatible)
+│   ├── interface.rs     # Interactive REPL with syntax check, lint, and auto-refine
+│   ├── python_exec.rs   # Python execution engine with timeout, lint, venv & Docker sandbox
 │   ├── utils.rs         # Code extraction, import parsing, UTF-8 utils
 │   └── logger.rs        # Logging and metrics
 ├── generated/           # Generated Python scripts
@@ -185,7 +189,7 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 ### Technology Stack
 
 - **Language**: Rust 2021 Edition
-- **AI Model**: Qwen/Qwen2.5-Coder-32B-Instruct (HuggingFace) — configurable
+- **AI Model**: Qwen/Qwen2.5-Coder-32B-Instruct via HuggingFace, Ollama, or any OpenAI-compatible endpoint — configurable
 - **Key Dependencies**:
   - `reqwest`: HTTP client for API calls
   - `tokio`: Async runtime
@@ -225,6 +229,7 @@ execution_timeout_secs = 30    # Kill scripts after this many seconds (0 = no ti
 auto_install_deps = false      # Auto-install detected dependencies without prompting
 use_docker = false             # Run scripts inside Docker sandbox (requires: docker build -t python-sandbox .)
 use_venv = true                # Isolate each execution in a temporary Python virtual environment
+use_linting = true             # Run ruff lint check on generated code before execution
 
 # API resilience
 max_retries = 3                # Retry on network errors, 429, and 5xx responses
@@ -294,14 +299,15 @@ View anytime with `/stats`
 **Safety Features**:
 - **Docker sandbox**: Runs scripts in an isolated container with no network access and read-only script mount
 - **Virtual environment isolation**: Temp venv per execution prevents dependency pollution (host & Docker)
+- **Static analysis**: `ruff` lint check catches code quality issues and unused imports before execution
 - Syntax check via `py_compile` before execution catches errors early
 - Execution timeout prevents runaway scripts
 - Dependency detection warns about non-standard imports before install
 - Graceful fallback to host execution if Docker is unavailable
 
 **Limitations**:
-- Requires HuggingFace Pro for heavy usage (free tier has rate limits)
-- Generated code quality depends on prompt clarity
+- HuggingFace free tier has rate limits; consider Pro for heavy usage (or switch to Ollama for unlimited local inference)
+- Generated code quality depends on prompt clarity and model capability
 
 ---
 
@@ -311,6 +317,7 @@ Contributions are welcome! Areas for improvement:
 
 - [x] Implement virtual environment isolation per script
 - [x] Support for additional AI models (Ollama, OpenAI-compatible, etc.)
+- [x] Static analysis / linting with ruff
 - [ ] Web UI using Tauri or similar
 - [ ] Support for other programming languages
 
@@ -380,30 +387,37 @@ MIT License - see LICENSE file for details
 
 ## 📞 Contact
 
- - **GitHub**: [Alvaro5](https://github.com/Alvaro5)
+- **GitHub**: [Alvaro5](https://github.com/Alvaro5)
 - **Project**: [python-maker-bot](https://github.com/Alvaro5/python-maker-bot)
 
 ---
 
 ## 🔄 Version History
 
-### v0.2.2 (Current - February 2026)
+### v0.2.2 (Current — February 2026)
 - 🐳 **Docker Sandbox**: Execute AI-generated scripts inside an isolated Docker container (`use_docker = true`)
   - Network-isolated execution (`--network none`), read-only script mount
-  - Dependency installation inside the container (persisted via `docker commit`)
+  - Dependency installation inside the container (via inline venv when `use_venv = true`)
   - Supports both Captured and Interactive execution modes
   - Graceful fallback to host execution when Docker is unavailable
 - 🐍 **Virtual Environment Isolation**: Each script execution runs in a temporary Python venv (`use_venv = true`, on by default)
   - Host mode: temp venv in OS temp dir, auto-cleaned after execution
   - Docker mode: venv created inline inside the ephemeral container — no image mutation
   - Prevents dependency conflicts and system Python pollution
+- 🌐 **Multi-Provider LLM Support**: Route code generation to HuggingFace (cloud), Ollama (local), or any OpenAI-compatible API
+  - Configured via `provider` field in `pymakebot.toml` (`"huggingface"`, `"ollama"`, `"openai-compatible"`)
+  - Auto URL resolution, per-provider auth, `/provider` REPL command
+- 🔍 **Static Analysis (Linting)**: Ruff-powered lint check (`use_linting = true`, on by default)
+  - Runs `ruff check` after syntax check, displays colored diagnostics
+  - Offers auto-refine on lint errors, `/lint` REPL command for on-demand checks
+  - Gracefully skipped if `ruff` is not installed
 - 🔧 **Configuration File**: `pymakebot.toml` support with load chain (local → home → defaults)
 - 🔁 **API Retry**: Exponential backoff with jitter on network errors, 429, and 5xx
 - ⏱️ **Execution Timeout**: Configurable timeout kills runaway scripts in Captured mode
 - ✅ **Syntax Check**: Pre-execution validation via `py_compile` with auto-refine on errors
 - 📏 **History Limit**: Automatic trimming of conversation history to configured max
 - 🐛 **Bug Fixes**: UTF-8 safe string slicing, correct success detection (`exit_code == 0`), cached regex compilation
-- 🧹 **Code Quality**: Zero clippy warnings, 74 tests (67 unit + 7 integration)
+- 🧹 **Code Quality**: Zero clippy warnings, 87 tests (80 unit + 7 integration)
 
 ### v0.2.1 (December 2025)
 - 🎮 **Interactive Mode**: Automatic detection for pygame, input(), tkinter, GUIs
