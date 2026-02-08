@@ -133,21 +133,40 @@ impl CodeExecutor {
 
     /// Check whether Docker is available and the sandbox image exists.
     /// Returns Ok(()) on success or an error describing what is missing.
+    ///
+    /// If Docker Desktop is asleep (Resource Saver mode on macOS), attempts to
+    /// wake it with `open -a Docker` and waits for the daemon to become responsive.
     pub fn check_docker_available() -> Result<()> {
-        // Check that the docker CLI is reachable
-        let version = Command::new("docker")
-            .arg("version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status();
-
-        match version {
-            Ok(s) if s.success() => {}
-            Ok(_) => return Err(anyhow::anyhow!("Docker daemon is not running")),
-            Err(e) => return Err(anyhow::anyhow!("Docker CLI not found: {}", e)),
+        // Quick check — if the daemon is already awake, return immediately.
+        if let Ok(true) = Self::run_docker_with_timeout(&["info"], 3) {
+            return Self::check_sandbox_image();
         }
 
-        // Check that the sandbox image exists
+        // Daemon is unresponsive. On macOS, try to wake Docker Desktop.
+        if cfg!(target_os = "macos") {
+            let _ = Command::new("open")
+                .args(["-g", "-a", "Docker"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+
+        // Wait for the daemon to become responsive.
+        let max_attempts = 10;
+        for attempt in 1..=max_attempts {
+            if let Ok(true) = Self::run_docker_with_timeout(&["info"], 3) {
+                return Self::check_sandbox_image();
+            }
+            if attempt < max_attempts {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            }
+        }
+
+        Err(anyhow::anyhow!("Docker daemon is not running"))
+    }
+
+    /// Verify the sandbox image exists locally.
+    fn check_sandbox_image() -> Result<()> {
         let inspect = Command::new("docker")
             .args(["image", "inspect", DOCKER_IMAGE])
             .stdout(Stdio::null())
@@ -163,6 +182,36 @@ impl CodeExecutor {
         }
 
         Ok(())
+    }
+
+    /// Run a docker command with a timeout in seconds.
+    /// Returns Ok(true) on success, Ok(false) on failure/timeout,
+    /// or Err if the docker CLI binary is not found.
+    fn run_docker_with_timeout(args: &[&str], timeout_secs: u64) -> Result<bool> {
+        let mut child = Command::new("docker")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(timeout_secs);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Ok(status.success()),
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Ok(false);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            }
+        }
     }
 
     /// Detect non-standard library dependencies in Python code
@@ -710,7 +759,11 @@ impl CodeExecutor {
         // Build the entrypoint command for venv mode
         let venv_shell_cmd = if use_venv_in_docker {
             let mut parts = vec![
-                "python3 -m venv /tmp/venv".to_string(),
+                // Use --system-site-packages so pre-baked libraries in the
+                // Docker image (numpy, pandas, etc.) are available without
+                // re-downloading. Additional deps can still be pip-installed
+                // into the venv on top.
+                "python3 -m venv --system-site-packages /tmp/venv".to_string(),
             ];
             if !deps.is_empty() {
                 parts.push(format!(

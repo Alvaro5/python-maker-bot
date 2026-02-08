@@ -222,12 +222,16 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
 
     // If Docker mode is enabled, verify Docker is available; fall back to host execution if not
     let use_docker = if config.use_docker {
+        print!("{}", "⏳ Checking Docker availability...".dimmed());
+        std::io::Write::flush(&mut std::io::stdout()).ok();
         match CodeExecutor::check_docker_available() {
             Ok(()) => {
+                print!("\r\x1b[2K");
                 println!("{}", "✓ Docker sandbox mode enabled.".green());
                 true
             }
             Err(e) => {
+                print!("\r\x1b[2K");
                 println!("{} {}", "✗ Docker sandbox not available:".red().bold(), e);
                 println!("{}", "  Falling back to host execution.".yellow());
                 println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
