@@ -1,0 +1,24 @@
+<div class="space-y-2 text-sm">
+    <div class="flex justify-between">
+        <span class="text-gray-500">Requests</span>
+        <span class="text-white">{{ total_requests }}</span>
+    </div>
+    <div class="flex justify-between">
+        <span class="text-gray-500">Successful</span>
+        <span class="text-green-400">{{ successful_executions }}</span>
+    </div>
+    <div class="flex justify-between">
+        <span class="text-gray-500">Failed</span>
+        <span class="text-red-400">{{ failed_executions }}</span>
+    </div>
+    <div class="flex justify-between">
+        <span class="text-gray-500">API Errors</span>
+        <span class="text-yellow-400">{{ api_errors }}</span>
+    </div>
+    <div class="mt-3 pt-3 border-t border-gray-800 flex justify-between">
+        <span class="text-gray-500">Success Rate</span>
+        <span class="{% if success_rate >= 80.0 %}text-green-400{% else if success_rate >= 50.0 %}text-yellow-400{% else %}text-red-400{% endif %}">
+            {{ success_rate|fmt("{:.1}") }}%
+        </span>
+    </div>
+</div>

@@ -1,5 +1,5 @@
 # Use a lightweight Python image
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install bash (for venv setup scripts) and ensure venv module is available
 RUN apt-get update && apt-get install -y --no-install-recommends bash \

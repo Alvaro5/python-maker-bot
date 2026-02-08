@@ -1,8 +1,8 @@
-# 🤖 Python Maker Bot v0.2.2
+# 🤖 Python Maker Bot v0.3.0
 
 **An AI-Powered Python Code Generator Built with Rust**
 
-> 🔒 Docker sandboxing, virtual-env isolation, multi-provider LLM support, ruff linting, and bandit security scanning — all built in!
+> 🔒 Docker sandboxing, virtual-env isolation, multi-provider LLM support, real-time web dashboard, ruff linting, and bandit security scanning — all built in!
 
 A Rust-based interactive shell that leverages AI language models to generate, refine, and execute Python code on demand. This agentic tool helps you quickly prototype Python scripts with conversational AI assistance.
 
@@ -19,6 +19,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 
 ### 🔄 Advanced Capabilities
 - **Multi-Turn Refinement**: Maintain conversation history to iteratively improve code
+- **Web Dashboard** 🌐: Real-time web interface with script history, code generation, session stats, Docker container monitoring, and WebSocket execution logs
 - **Interactive Mode** 🎮: Automatically detects and runs interactive programs (pygame games, user input, GUIs)
 - **Docker Sandbox** 🐳: Optionally execute AI-generated code inside an isolated Docker container for security
 - **Virtual Environment Isolation** 🐍: Each script runs in a temporary venv to avoid polluting the system Python (host & Docker)
@@ -36,6 +37,7 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 
 ### 🎨 User Experience
 - **Colored Output**: Syntax-highlighted code display with colorized terminal output
+- **Web Dashboard**: Browser-based UI for code generation and monitoring (`/dashboard` command)
 - **File Management**: Save generated code to files with `/save` command
 - **History Tracking**: View conversation history with `/history`
 - **Session Stats**: Monitor performance with `/stats`
@@ -105,6 +107,7 @@ use_docker = true
 | `/provider` | Show current LLM provider info |
 | `/lint` | Lint the last generated code with ruff |
 | `/security` | Run security scan (bandit) on last code |
+| `/dashboard` | Show dashboard URL (if enabled) |
 
 ### Example Session
 
@@ -181,7 +184,17 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
 │   ├── interface.rs     # Interactive REPL with syntax check, lint, and auto-refine
 │   ├── python_exec.rs   # Python execution engine with timeout, lint, venv & Docker sandbox
 │   ├── utils.rs         # Code extraction, import parsing, UTF-8 utils
-│   └── logger.rs        # Logging and metrics
+│   ├── logger.rs        # Logging and metrics
+│   └── dashboard/       # Web dashboard module
+│       ├── mod.rs       # Module re-exports
+│       ├── server.rs    # Axum HTTP server setup
+│       ├── routes.rs    # REST API and page route handlers
+│       ├── state.rs     # Shared dashboard state and event types
+│       ├── templates.rs # Askama template render helpers
+│       └── websocket.rs # WebSocket handler for real-time logs
+├── templates/           # Askama HTML templates (dashboard UI)
+│   ├── index.html       # Main dashboard page
+│   └── partials/        # HTMX partial templates (history, stats, code, containers)
 ├── generated/           # Generated Python scripts
 ├── logs/                # Session logs
 ├── Cargo.toml           # Rust dependencies
@@ -203,6 +216,9 @@ See [INTERACTIVE_MODE.md](INTERACTIVE_MODE.md) for detailed documentation on run
   - `regex`: Code extraction (cached with `LazyLock`)
   - `chrono`: Timestamps
   - `rand`: Retry jitter
+  - `axum`: Web framework for the dashboard (with WebSocket support)
+  - `askama`: Compile-time HTML templates
+  - `htmx`: Lightweight frontend interactivity (loaded via CDN)
 
 ---
 
@@ -224,7 +240,7 @@ provider = "huggingface"
 # AI model settings
 model = "Qwen/Qwen2.5-Coder-32B-Instruct"
 api_url = "https://router.huggingface.co/v1/chat/completions"
-max_tokens = 16284
+max_tokens = 16384
 temperature = 0.2
 
 # Execution settings
@@ -239,6 +255,10 @@ max_retries = 3                # Retry on network errors, 429, and 5xx responses
 
 # History management
 max_history_messages = 20      # Trim oldest messages when history exceeds this
+
+# Web dashboard
+enable_dashboard = false       # Start the web dashboard alongside the REPL
+dashboard_port = 3000          # Port for the dashboard HTTP server (localhost only)
 
 # File locations
 log_dir = "logs"
@@ -323,7 +343,7 @@ Contributions are welcome! Areas for improvement:
 - [x] Support for additional AI models (Ollama, OpenAI-compatible, etc.)
 - [x] Static analysis / linting with ruff
 - [x] Pre-flight security scanning with bandit
-- [ ] Web UI using Tauri or similar
+- [x] Web dashboard with real-time monitoring
 - [ ] Support for other programming languages
 
 ---
@@ -399,7 +419,20 @@ MIT License - see LICENSE file for details
 
 ## 🔄 Version History
 
-### v0.2.2 (Current — February 2026)
+### v0.3.0 (Current — February 2026)
+- 🌐 **Web Dashboard**: Real-time browser-based dashboard running alongside the CLI REPL
+  - Code generation via the web UI (same LLM & config as the REPL)
+  - Script history sidebar with click-to-view source
+  - Session stats panel (requests, success rate, API errors)
+  - Docker container monitoring panel
+  - WebSocket-powered live execution logs (stdout/stderr in real-time)
+  - Built with Axum, Askama templates, HTMX, and Tailwind CSS
+  - Enabled via `enable_dashboard = true` in `pymakebot.toml`
+  - Access at `http://localhost:3000` (port configurable, binds to localhost only)
+  - `/dashboard` REPL command to display the URL
+- 🔧 **Code Quality**: Refactored REPL initialization to eliminate duplication, delta-based dashboard state sync, async I/O in dashboard routes
+
+### v0.2.2 (February 2026)
 - 🐳 **Docker Sandbox**: Execute AI-generated scripts inside an isolated Docker container (`use_docker = true`)
   - Network-isolated execution (`--network none`), read-only script mount
   - Dependency installation inside the container (via inline venv when `use_venv = true`)

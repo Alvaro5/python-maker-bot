@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::utils::find_char_boundary;
 use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
@@ -87,21 +88,9 @@ impl Provider {
                         .context("Invalid Bearer token format")?,
                 );
             }
-            Self::Ollama => {
-                // Ollama requires no authentication by default.
-                // If the user set LLM_API_KEY, honor it (some Ollama proxies use auth).
-                if let Ok(key) = std::env::var("LLM_API_KEY") {
-                    if !key.is_empty() {
-                        headers.insert(
-                            AUTHORIZATION,
-                            HeaderValue::from_str(&format!("Bearer {key}"))
-                                .context("Invalid LLM_API_KEY format")?,
-                        );
-                    }
-                }
-            }
-            Self::OpenAiCompatible => {
-                // Use LLM_API_KEY if available.
+            Self::Ollama | Self::OpenAiCompatible => {
+                // Ollama requires no auth by default; OpenAI-compatible may need it.
+                // Honor LLM_API_KEY when set (some Ollama proxies also use auth).
                 if let Ok(key) = std::env::var("LLM_API_KEY") {
                     if !key.is_empty() {
                         headers.insert(
@@ -302,7 +291,7 @@ pub async fn generate_code_with_history(
                 .with_context(|| format!(
                     "Failed to parse {} JSON response. Raw body:\n{}",
                     provider.display_name(),
-                    &text_body[..text_body.len().min(500)]
+                    &text_body[..find_char_boundary(&text_body, 500)]
                 ))?;
 
             let generated = parsed

@@ -1,6 +1,6 @@
 [package]
 name = "python-maker-bot"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -21,6 +21,11 @@ dirs = "5.0"
 wait-timeout = "0.2"
 rustyline = { version = "15", features = ["derive"] }
 
+# Web dashboard
+axum = { version = "0.7", features = ["ws"] }
+askama = "0.12"
+askama_axum = "0.4"
+futures = "0.3"
+
 [dev-dependencies]
 mockito = "1.5"
-colored = "2.1"

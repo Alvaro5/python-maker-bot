@@ -1,1 +1,3 @@
 use_docker = true
+enable_dashboard = true
+dashboard_port = 3000   

@@ -9,12 +9,18 @@ pub struct Logger {
     log_file: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionMetrics {
     pub total_requests: usize,
     pub successful_executions: usize,
     pub failed_executions: usize,
     pub api_errors: usize,
+}
+
+impl Default for SessionMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SessionMetrics {

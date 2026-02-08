@@ -1,0 +1,15 @@
+{% if containers.is_empty() %}
+<p class="text-sm text-gray-600">No active containers.</p>
+{% else %}
+<div class="space-y-2">
+    {% for c in containers %}
+    <div class="p-2 bg-gray-800 rounded text-xs">
+        <div class="flex justify-between">
+            <span class="text-cyan-400 font-mono">{{ c.id }}</span>
+            <span class="text-green-400">{{ c.status }}</span>
+        </div>
+        <div class="text-gray-500 mt-1">{{ c.names }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use crate::api::{self, Message, Provider};
 use crate::config::AppConfig;
+use crate::dashboard::state::{DashboardState, ExecutionEvent};
 use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity, SecuritySeverity};
 use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
@@ -16,7 +17,7 @@ use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Va
 /// Available slash commands for tab-completion.
 const COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/refine",
-    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint", "/security",
+    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint", "/security", "/dashboard",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -71,7 +72,7 @@ impl Completer for CommandCompleter {
 // Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue
 pub fn print_banner() {
     println!("{}", "====================================".bright_cyan());
-    println!("{}", "      PYTHON MAKER BOT v0.2.1       ".bright_cyan().bold());
+    println!("{}", "      PYTHON MAKER BOT v0.3.0       ".bright_cyan().bold());
     println!("{}", "====================================".bright_cyan());
     println!("{}", " AI-Powered Python Code Generator".bright_white());
     println!("{}\n", " Type /help for commands or /quit to exit".dimmed());
@@ -156,29 +157,36 @@ fn stop_spinner(handle: &Arc<AtomicBool>) {
     std::thread::sleep(std::time::Duration::from_millis(100));
 }
 
-// Interactive REPL entry point
-pub async fn start_repl(config: &AppConfig) {
-    print_banner();
+/// Shared initialization context for the REPL, used by both standalone
+/// and dashboard-enabled entry points.
+struct ReplContext {
+    executor: CodeExecutor,
+    logger: Logger,
+    metrics: SessionMetrics,
+    linter_available: bool,
+    security_scanner_available: bool,
+    /// Resolved Docker availability (may differ from config if Docker is unavailable).
+    use_docker: bool,
+}
 
+/// Validate provider, check tool availability, create executor/logger.
+/// Returns `None` if provider configuration is invalid (errors are printed).
+fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
     // Validate and display the configured provider
     let provider = match Provider::from_config(&config.provider) {
         Ok(p) => p,
         Err(e) => {
             println!("{} {}", "✗ Invalid provider configuration:".red().bold(), e);
-            return;
+            return None;
         }
     };
     match provider.resolve_api_url(&config.api_url) {
         Ok(url) => println!("{} {} → {}", "✓ Provider:".green(), provider.display_name().bright_white(), url.dimmed()),
         Err(e) => {
             println!("{} {}", "✗ Provider configuration error:".red().bold(), e);
-            return;
+            return None;
         }
     }
-
-    let executor = CodeExecutor::new(&config.generated_dir, config.use_docker, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
-    let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
-    let metrics = SessionMetrics::new();
 
     if config.use_venv {
         println!("{}", "✓ Virtual environment isolation enabled.".green());
@@ -212,23 +220,85 @@ pub async fn start_repl(config: &AppConfig) {
         false
     };
 
-    // If Docker mode is enabled, verify Docker is available
-    if config.use_docker {
+    // If Docker mode is enabled, verify Docker is available; fall back to host execution if not
+    let use_docker = if config.use_docker {
         match CodeExecutor::check_docker_available() {
-            Ok(()) => println!("{}", "✓ Docker sandbox mode enabled.".green()),
+            Ok(()) => {
+                println!("{}", "✓ Docker sandbox mode enabled.".green());
+                true
+            }
             Err(e) => {
                 println!("{} {}", "✗ Docker sandbox not available:".red().bold(), e);
                 println!("{}", "  Falling back to host execution.".yellow());
                 println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
-                // Recreate executor without Docker
-                // (we can't mutate executor, so shadow it)
-                let executor = CodeExecutor::new(&config.generated_dir, false, config.use_venv, &config.python_executable).expect("Failed to create generated scripts directory");
-                return start_repl_loop(config, executor, logger, metrics, linter_available, security_scanner_available).await;
+                false
             }
         }
-    }
+    } else {
+        false
+    };
 
-    start_repl_loop(config, executor, logger, metrics, linter_available, security_scanner_available).await;
+    let executor = CodeExecutor::new(&config.generated_dir, use_docker, config.use_venv, &config.python_executable)
+        .expect("Failed to create generated scripts directory");
+    let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
+    let metrics = SessionMetrics::new();
+
+    Some(ReplContext {
+        executor,
+        logger,
+        metrics,
+        linter_available,
+        security_scanner_available,
+        use_docker,
+    })
+}
+
+// Interactive REPL entry point
+pub async fn start_repl(config: &AppConfig) {
+    print_banner();
+
+    let ctx = match init_repl_context(config) {
+        Some(c) => c,
+        None => return,
+    };
+
+    start_repl_loop(config, ctx.executor, ctx.logger, ctx.metrics, ctx.linter_available, ctx.security_scanner_available, None).await;
+}
+
+/// Start the REPL with the web dashboard running in the background.
+///
+/// Creates shared state, spawns the Axum dashboard server, then runs
+/// the same REPL loop with dashboard event broadcasting enabled.
+pub async fn start_repl_with_dashboard(config: &AppConfig) {
+    print_banner();
+
+    let ctx = match init_repl_context(config) {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Create a second executor+logger for the dashboard's REST API
+    let dashboard_executor = CodeExecutor::new(
+        &config.generated_dir, ctx.use_docker, config.use_venv, &config.python_executable
+    ).expect("Failed to create generated scripts directory");
+    let dashboard_logger = Logger::new(&config.log_dir).expect("Failed to create logger");
+
+    // Create shared dashboard state and spawn the web server
+    let state = DashboardState::new(config.clone(), dashboard_executor, dashboard_logger);
+    let dashboard_port = config.dashboard_port;
+
+    let server_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::dashboard::start_dashboard(server_state, dashboard_port).await {
+            eprintln!("{} {}", "✗ Dashboard server error:".red(), e);
+        }
+    });
+
+    println!("{} {}",
+        "✓ Dashboard running at:".green(),
+        format!("http://localhost:{}", dashboard_port).bright_white().underline());
+
+    start_repl_loop(config, ctx.executor, ctx.logger, ctx.metrics, ctx.linter_available, ctx.security_scanner_available, Some(state)).await;
 }
 
 async fn start_repl_loop(
@@ -238,6 +308,7 @@ async fn start_repl_loop(
     mut metrics: SessionMetrics,
     linter_available: bool,
     security_scanner_available: bool,
+    dashboard: Option<Arc<DashboardState>>,
 ) {
     // Set up rustyline editor with tab-completion
     let rl_config = Config::builder()
@@ -251,6 +322,9 @@ async fn start_repl_loop(
     // Conversation history for multi-turn refinement
     let mut conversation_history: Vec<Message> = Vec::new();
     let mut last_generated_code = String::new();
+
+    // Track last synced metrics for delta-based dashboard updates
+    let mut last_synced_metrics = SessionMetrics::new();
 
     loop {
         let readline = rl.readline(&"> ".bright_cyan().bold().to_string());
@@ -289,7 +363,19 @@ async fn start_repl_loop(
             println!("  {}     - Show current LLM provider info", "/provider".green());
             println!("  {}         - Lint the last generated code with ruff", "/lint".green());
             println!("  {}     - Run security scan (bandit) on last code", "/security".green());
+            println!("  {}    - Show dashboard URL (if enabled)", "/dashboard".green());
             println!();
+            continue;
+        }
+
+        if prompt == "/dashboard" {
+            if let Some(ref ds) = dashboard {
+                println!("{} {}",
+                    "Dashboard running at:".bright_cyan(),
+                    format!("http://localhost:{}", ds.config.dashboard_port).bright_white().underline());
+            } else {
+                println!("{}", "Dashboard is not enabled. Set enable_dashboard = true in pymakebot.toml".yellow());
+            }
             continue;
         }
 
@@ -595,6 +681,16 @@ async fn start_repl_loop(
                     }
                 };
 
+                // Sync state to dashboard and broadcast event
+                if let Some(ref ds) = dashboard {
+                    sync_to_dashboard(ds, &metrics, &last_synced_metrics, &conversation_history, &last_generated_code).await;
+                    last_synced_metrics = metrics.clone();
+                    ds.broadcast(ExecutionEvent::CodeGenerated {
+                        code: code.clone(),
+                        script_path: script_path.display().to_string(),
+                    });
+                }
+
                 // Syntax check
                 if let Err(syntax_err) = executor.syntax_check(&script_path) {
                     println!("\n{} {}", "✗ Syntax error detected:".red().bold(), syntax_err);
@@ -776,6 +872,13 @@ async fn start_repl_loop(
                         ExecutionMode::Captured
                     };
 
+                    // Broadcast execution start to dashboard
+                    if let Some(ref ds) = dashboard {
+                        ds.broadcast(ExecutionEvent::ExecutionStarted {
+                            script_path: script_path.display().to_string(),
+                        });
+                    }
+
                     match executor.execute_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &deps) {
                         Ok(result) => {
                             let success = result.is_success();
@@ -786,6 +889,17 @@ async fn start_repl_loop(
                             }
 
                             let _ = logger.log_execution(success, &result.stdout);
+
+                            // Broadcast execution result to dashboard
+                            if let Some(ref ds) = dashboard {
+                                broadcast_execution_output(ds, &result.stdout, &result.stderr);
+                                ds.broadcast(ExecutionEvent::ExecutionCompleted {
+                                    success,
+                                    exit_code: result.exit_code,
+                                });
+                                sync_to_dashboard(ds, &metrics, &last_synced_metrics, &conversation_history, &last_generated_code).await;
+                                last_synced_metrics = metrics.clone();
+                            }
 
                             println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
                             println!("{} {:?}", "Script saved at:".dimmed(), result.script_path);
@@ -906,6 +1020,53 @@ async fn start_repl_loop(
     // Display session statistics on exit
     println!("\n{}", "Session ended.".bright_cyan());
     metrics.display();
+}
+
+/// Sync local REPL state to the shared dashboard state.
+///
+/// Uses delta-based merging for metrics so that dashboard-originated
+/// metrics (from /api/generate) are not overwritten by the REPL sync.
+async fn sync_to_dashboard(
+    ds: &Arc<DashboardState>,
+    metrics: &SessionMetrics,
+    last_synced: &SessionMetrics,
+    history: &[Message],
+    last_code: &str,
+) {
+    {
+        let mut m = ds.metrics.write().await;
+        m.total_requests += metrics.total_requests.saturating_sub(last_synced.total_requests);
+        m.successful_executions += metrics.successful_executions.saturating_sub(last_synced.successful_executions);
+        m.failed_executions += metrics.failed_executions.saturating_sub(last_synced.failed_executions);
+        m.api_errors += metrics.api_errors.saturating_sub(last_synced.api_errors);
+    }
+    {
+        let mut h = ds.conversation_history.write().await;
+        *h = history.to_vec();
+    }
+    {
+        let mut c = ds.last_generated_code.write().await;
+        *c = last_code.to_string();
+    }
+}
+
+/// Send stdout and stderr lines as individual log events to the dashboard.
+fn broadcast_execution_output(ds: &Arc<DashboardState>, stdout: &str, stderr: &str) {
+    let ts = chrono::Local::now().format("%H:%M:%S").to_string();
+    for line in stdout.lines() {
+        ds.broadcast(ExecutionEvent::LogLine {
+            timestamp: ts.clone(),
+            stream: "stdout".to_string(),
+            content: line.to_string(),
+        });
+    }
+    for line in stderr.lines() {
+        ds.broadcast(ExecutionEvent::LogLine {
+            timestamp: ts.clone(),
+            stream: "stderr".to_string(),
+            content: line.to_string(),
+        });
+    }
 }
 
 /// Display lint results with colored output.

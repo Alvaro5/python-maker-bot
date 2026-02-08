@@ -702,6 +702,11 @@ impl CodeExecutor {
         // installs dependencies, and runs the script — all in one ephemeral container.
         let use_venv_in_docker = self.use_venv;
 
+        // Only enforce network isolation when no packages need downloading.
+        // When deps are present the user has already approved the install,
+        // so pip needs network access inside the container.
+        let needs_network = use_venv_in_docker && !deps.is_empty();
+
         // Build the entrypoint command for venv mode
         let venv_shell_cmd = if use_venv_in_docker {
             let mut parts = vec![
@@ -726,8 +731,10 @@ impl CodeExecutor {
                     "run", "--rm",
                     "-i",
                     "-v", &volume_mount,
-                    "--network", "none",
                 ]);
+                if !needs_network {
+                    cmd.args(["--network", "none"]);
+                }
 
                 if let Some(ref shell_cmd) = venv_shell_cmd {
                     // Venv mode: need root to create venv, run via bash
@@ -761,8 +768,10 @@ impl CodeExecutor {
                 cmd.args([
                     "run", "--rm",
                     "-v", &volume_mount,
-                    "--network", "none",
                 ]);
+                if !needs_network {
+                    cmd.args(["--network", "none"]);
+                }
 
                 if let Some(ref shell_cmd) = venv_shell_cmd {
                     cmd.args(["--user", "root", DOCKER_IMAGE, "bash", "-c", shell_cmd]);

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Maker Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/python.min.js"></script>
+    <style>
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-block; }
+        .htmx-request.htmx-indicator { display: inline-block; }
+        #log-output { max-height: 200px; }
+        pre code.hljs { background: transparent !important; padding: 0 !important; }
+    </style>
+</head>
+<body class="h-full bg-gray-950 text-gray-100 font-mono">
+    <div class="flex h-full">
+
+        <!-- Left Sidebar: Script History -->
+        <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
+            <div class="p-4 border-b border-gray-800">
+                <h1 class="text-lg font-bold text-cyan-400">Python Maker Bot</h1>
+                <p class="text-xs text-gray-500 mt-1">Dashboard v0.3.0</p>
+            </div>
+            <div class="p-3 border-b border-gray-800">
+                <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Script History</h2>
+            </div>
+            <div id="history-list"
+                 class="flex-1 overflow-y-auto p-2"
+                 hx-get="/api/history/html"
+                 hx-trigger="load, every 15s, historyRefresh"
+                 hx-swap="innerHTML">
+                {% for script in scripts %}
+                <button type="button"
+                        class="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-800 text-gray-300 truncate"
+                        data-script="{{ script.filename }}">
+                    {{ script.filename }}
+                </button>
+                {% endfor %}
+                {% if scripts.is_empty() %}
+                <p class="text-sm text-gray-600 px-3 py-2">No scripts yet.</p>
+                {% endif %}
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col min-w-0">
+
+            <!-- Top Bar: Provider Info -->
+            <header class="px-4 py-2 bg-gray-900 border-b border-gray-800 flex items-center gap-4 text-sm">
+                <span class="text-gray-500">Provider:</span>
+                <span class="text-green-400">{{ provider }}</span>
+                <span class="text-gray-700">|</span>
+                <span class="text-gray-500">Model:</span>
+                <span class="text-white">{{ model }}</span>
+                {% if docker_enabled %}
+                <span class="ml-auto px-2 py-0.5 bg-blue-900/40 text-blue-400 rounded text-xs">Docker</span>
+                {% endif %}
+                {% if venv_enabled %}
+                <span class="px-2 py-0.5 bg-green-900/40 text-green-400 rounded text-xs">venv</span>
+                {% endif %}
+            </header>
+
+            <!-- Prompt Input -->
+            <div class="p-4 bg-gray-900/50 border-b border-gray-800">
+                <form hx-post="/api/generate"
+                      hx-target="#code-output"
+                      hx-swap="innerHTML"
+                      hx-indicator="#generate-spinner"
+                      class="flex gap-3">
+                    <textarea name="prompt"
+                              rows="2"
+                              class="flex-1 p-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 resize-none focus:outline-none focus:border-cyan-600"
+                              placeholder="Describe the Python code you want to generate..."
+                              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();this.form.requestSubmit()}"></textarea>
+                    <div class="flex flex-col gap-2">
+                        <button type="submit"
+                                class="px-6 py-2 bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg font-semibold transition-colors">
+                            Generate
+                        </button>
+                        <span id="generate-spinner" class="htmx-indicator text-cyan-400 text-xs text-center">
+                            Generating...
+                        </span>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Code Output -->
+            <div id="code-output" class="flex-1 overflow-y-auto p-4 bg-gray-950">
+                {% if !last_code.is_empty() %}
+                <pre class="bg-gray-900 rounded-lg p-4 overflow-x-auto"><code class="language-python">{{ last_code }}</code></pre>
+                {% else %}
+                <div class="flex items-center justify-center h-full text-gray-600">
+                    <div class="text-center">
+                        <p class="text-2xl mb-2">&#129302;</p>
+                        <p>Enter a prompt above to generate Python code</p>
+                        <p class="text-sm mt-1">Or click a script from the history sidebar</p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Real-time Execution Logs -->
+            <div class="border-t border-gray-800 bg-black">
+                <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
+                    <h3 class="text-sm font-semibold text-green-400">Execution Logs</h3>
+                    <button onclick="document.getElementById('log-output').innerHTML=''"
+                            class="text-xs text-gray-600 hover:text-gray-400">Clear</button>
+                </div>
+                <div id="log-output" class="p-3 overflow-y-auto text-xs font-mono space-y-0.5">
+                    <div class="text-gray-600">Waiting for execution events...</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Sidebar: Stats & Containers -->
+        <aside class="w-72 bg-gray-900 border-l border-gray-800 flex flex-col">
+            <!-- Session Stats -->
+            <div class="p-4 border-b border-gray-800">
+                <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Session Stats</h2>
+                <div id="stats-panel"
+                     hx-get="/api/stats/html"
+                     hx-trigger="load, every 10s"
+                     hx-swap="innerHTML">
+                    <p class="text-sm text-gray-600">Loading stats...</p>
+                </div>
+            </div>
+
+            <!-- Docker Containers -->
+            <div class="p-4 flex-1 overflow-y-auto">
+                <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Docker Containers</h2>
+                <div id="containers-panel"
+                     hx-get="/api/containers/html"
+                     hx-trigger="load, every 15s"
+                     hx-swap="innerHTML">
+                    <p class="text-sm text-gray-600">Loading containers...</p>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- WebSocket for Real-time Logs -->
+    <script>
+        // Syntax highlighting for initial code block
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+        });
+
+        // Re-highlight code blocks after HTMX swaps
+        document.body.addEventListener('htmx:afterSwap', (event) => {
+            event.detail.target.querySelectorAll('pre code').forEach(el => {
+                try { hljs.highlightElement(el); } catch(e) {}
+            });
+        });
+
+        // Event delegation for script history buttons.
+        // Uses data-script attribute + htmx.ajax() instead of hx-get on child elements,
+        // because HTMX 2.0 doesn't reliably process hx-* attributes on elements
+        // dynamically swapped inside a parent that itself has hx-get/hx-trigger.
+        document.getElementById('history-list').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-script]');
+            if (btn) {
+                htmx.ajax('GET', '/code/' + encodeURIComponent(btn.dataset.script), {
+                    target: '#code-output',
+                    swap: 'innerHTML'
+                });
+            }
+        });
+
+        // WebSocket connection for live logs
+        let ws;
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/api/logs`);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const logDiv = document.getElementById('log-output');
+
+                // Clear the placeholder on first message
+                if (logDiv.querySelector('.text-gray-600:only-child')) {
+                    logDiv.innerHTML = '';
+                }
+
+                const line = document.createElement('div');
+
+                if (data.type === 'LogLine') {
+                    line.className = data.stream === 'stderr' ? 'text-red-400' : 'text-green-300';
+                    line.textContent = `[${data.timestamp}] ${data.content}`;
+                } else if (data.type === 'ExecutionStarted') {
+                    line.className = 'text-cyan-400 font-semibold';
+                    line.textContent = `[STARTED] ${data.script_path}`;
+                } else if (data.type === 'ExecutionCompleted') {
+                    line.className = data.success ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold';
+                    line.textContent = `[${data.success ? 'SUCCESS' : 'FAILED'}] exit_code=${data.exit_code ?? 'N/A'}`;
+                } else if (data.type === 'CodeGenerated') {
+                    line.className = 'text-yellow-400';
+                    line.textContent = `[GENERATED] New code written`;
+                    // Refresh history sidebar
+                    htmx.trigger(document.getElementById('history-list'), 'historyRefresh');
+                }
+
+                logDiv.appendChild(line);
+                logDiv.scrollTop = logDiv.scrollHeight;
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWS, 3000); // auto-reconnect
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+        connectWS();
+    </script>
+</body>
+</html>

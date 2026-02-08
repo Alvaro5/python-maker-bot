@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 
-/// Application configuration, loaded from `.pymakebot.toml`.
+/// Application configuration, loaded from `pymakebot.toml`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub log_dir: String,
     pub generated_dir: String,
     pub python_executable: String,
+    pub enable_dashboard: bool,
+    pub dashboard_port: u16,
 }
 
 impl Default for AppConfig {
@@ -30,7 +32,7 @@ impl Default for AppConfig {
             provider: "huggingface".to_string(),
             model: "Qwen/Qwen2.5-Coder-32B-Instruct".to_string(),
             api_url: "https://router.huggingface.co/v1/chat/completions".to_string(),
-            max_tokens: 16284,
+            max_tokens: 16384,
             temperature: 0.2,
             execution_timeout_secs: 30,
             auto_install_deps: false,
@@ -43,6 +45,8 @@ impl Default for AppConfig {
             log_dir: "logs".to_string(),
             generated_dir: "generated".to_string(),
             python_executable: "python3".to_string(),
+            enable_dashboard: false,
+            dashboard_port: 3000,
         }
     }
 }
@@ -82,7 +86,7 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.provider, "huggingface");
         assert_eq!(cfg.model, "Qwen/Qwen2.5-Coder-32B-Instruct");
-        assert_eq!(cfg.max_tokens, 16284);
+        assert_eq!(cfg.max_tokens, 16384);
         assert_eq!(cfg.temperature, 0.2);
         assert_eq!(cfg.execution_timeout_secs, 30);
         assert!(!cfg.auto_install_deps);
@@ -95,6 +99,8 @@ mod tests {
         assert_eq!(cfg.log_dir, "logs");
         assert_eq!(cfg.python_executable, "python3");
         assert_eq!(cfg.generated_dir, "generated");
+        assert!(!cfg.enable_dashboard);
+        assert_eq!(cfg.dashboard_port, 3000);
     }
 
     #[test]
