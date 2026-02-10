@@ -131,6 +131,11 @@ impl CodeExecutor {
         Ok(Self { base_dir: dir, use_docker, use_venv, python_executable: python_executable.to_string() })
     }
 
+    /// Return a reference to the base directory where scripts are stored.
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
+    }
+
     /// Check whether Docker is available and the sandbox image exists.
     /// Returns Ok(()) on success or an error describing what is missing.
     ///
@@ -542,6 +547,50 @@ impl CodeExecutor {
         })
     }
 
+    /// Static version of `lint_check` that doesn't require a `CodeExecutor` instance.
+    /// Used by the dashboard's on-demand lint endpoint.
+    pub fn lint_check_static(path: &PathBuf) -> Result<LintResult> {
+        let output = Command::new("ruff")
+            .args(["check", "--output-format=concise", "--no-fix"])
+            .arg(path)
+            .output()
+            .context("Failed to run ruff. Is it installed? (pip install ruff)")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        let diagnostics: Vec<LintDiagnostic> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with("Found "))
+            .map(|line| {
+                let severity = if line.contains(" F") || line.contains(" E") {
+                    LintSeverity::Error
+                } else {
+                    LintSeverity::Warning
+                };
+                LintDiagnostic {
+                    message: line.to_string(),
+                    severity,
+                }
+            })
+            .collect();
+
+        let has_errors = diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
+        let summary = stdout
+            .lines()
+            .find(|line| line.starts_with("Found "))
+            .unwrap_or("")
+            .to_string();
+
+        Ok(LintResult {
+            passed: diagnostics.is_empty(),
+            has_errors,
+            diagnostics,
+            summary,
+            stderr,
+        })
+    }
+
     // ── Static security analysis (bandit) ───────────────────────────────
 
     /// Check whether `bandit` is available on PATH.
@@ -581,6 +630,53 @@ impl CodeExecutor {
             let high = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::High).count();
             let med = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Medium).count();
             let low = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Low).count();
+            format!(
+                "Found {} issue(s): {} high, {} medium, {} low severity",
+                count, high, med, low
+            )
+        };
+
+        Ok(SecurityResult {
+            passed: diagnostics.is_empty(),
+            has_high_severity,
+            diagnostics,
+            summary,
+            stderr,
+        })
+    }
+
+    /// Static version of `security_check` that doesn't require a `CodeExecutor` instance.
+    /// Used by the dashboard's on-demand security endpoint.
+    pub fn security_check_static(path: &PathBuf) -> Result<SecurityResult> {
+        let output = Command::new("bandit")
+            .args(["-f", "json", "-q"])
+            .arg(path)
+            .output()
+            .context("Failed to run bandit. Is it installed? (pip install bandit)")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        let diagnostics = Self::parse_bandit_json(&stdout);
+        let has_high_severity = diagnostics
+            .iter()
+            .any(|d| d.severity == SecuritySeverity::High);
+        let count = diagnostics.len();
+        let summary = if count == 0 {
+            String::new()
+        } else {
+            let high = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::High)
+                .count();
+            let med = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::Medium)
+                .count();
+            let low = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::Low)
+                .count();
             format!(
                 "Found {} issue(s): {} high, {} medium, {} low severity",
                 count, high, med, low
@@ -1088,6 +1184,120 @@ impl CodeExecutor {
                 }
             }
         }
+    }
+
+    /// Spawn a Python process with **all three stdio handles piped** (stdin, stdout, stderr).
+    ///
+    /// This is intended for the web dashboard's interactive mode: the caller
+    /// reads stdout/stderr asynchronously and can write to the child's stdin
+    /// when the script calls `input()`.
+    ///
+    /// The caller is responsible for waiting on or killing the returned `Child`.
+    ///
+    /// * `script_path` — absolute path to the `.py` file.
+    /// * `venv` — optional path to a host-side virtual environment.
+    /// * `deps` — packages to install in a Docker venv (Docker+venv mode only).
+    pub fn spawn_piped(
+        &self,
+        script_path: &PathBuf,
+        venv: Option<&std::path::Path>,
+        deps: &[String],
+    ) -> Result<std::process::Child> {
+        if self.use_docker {
+            self.spawn_piped_docker(script_path, deps)
+        } else {
+            self.spawn_piped_host(script_path, venv)
+        }
+    }
+
+    /// Spawn a piped process inside the Docker sandbox.
+    fn spawn_piped_docker(
+        &self,
+        script_path: &PathBuf,
+        deps: &[String],
+    ) -> Result<std::process::Child> {
+        let absolute_path = std::fs::canonicalize(script_path)
+            .with_context(|| format!("Could not resolve path: {:?}", script_path))?;
+        let parent_dir = absolute_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Script has no parent directory"))?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Script parent path is not valid UTF-8"))?;
+        let filename = absolute_path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("Script has no filename"))?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Script filename is not valid UTF-8"))?;
+
+        let volume_mount = format!("{}:/home/sandboxuser/scripts:ro", parent_dir);
+        let script_in_container = format!("/home/sandboxuser/scripts/{}", filename);
+
+        let needs_network = self.use_venv && !deps.is_empty();
+
+        let venv_shell_cmd = if self.use_venv {
+            let mut parts = vec![
+                "python3 -m venv --system-site-packages /tmp/venv".to_string(),
+            ];
+            if !deps.is_empty() {
+                parts.push(format!(
+                    "/tmp/venv/bin/pip install --quiet {}",
+                    deps.join(" ")
+                ));
+            }
+            parts.push(format!("/tmp/venv/bin/python3 -u {}", script_in_container));
+            Some(parts.join(" && "))
+        } else {
+            None
+        };
+
+        let mut cmd = Command::new("docker");
+        cmd.args(["run", "--rm", "-i", "-v", &volume_mount]);
+        if !needs_network {
+            cmd.args(["--network", "none"]);
+        }
+        if let Some(ref shell_cmd) = venv_shell_cmd {
+            cmd.args(["--user", "root", DOCKER_IMAGE, "bash", "-c", shell_cmd]);
+        } else {
+            cmd.args([DOCKER_IMAGE, "python3", "-u", &script_in_container]);
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn piped Docker process")
+    }
+
+    /// Spawn a piped process on the host.
+    fn spawn_piped_host(
+        &self,
+        script_path: &PathBuf,
+        venv: Option<&std::path::Path>,
+    ) -> Result<std::process::Child> {
+        // Choose the Python interpreter
+        let interpreter: String = if let Some(venv_path) = venv {
+            let python = Self::venv_python(venv_path);
+            python.to_str()
+                .ok_or_else(|| anyhow::anyhow!("Venv python path is not valid UTF-8"))?
+                .to_string()
+        } else {
+            // Try primary, then fallback
+            let primary = self.python_executable.as_str();
+            if Command::new(primary).arg("--version").output().is_ok() {
+                primary.to_string()
+            } else {
+                "python".to_string()
+            }
+        };
+
+        Command::new(&interpreter)
+            .arg("-u") // unbuffered output for real-time streaming
+            .arg(script_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("Failed to spawn piped process with {}", interpreter))
     }
 }
 

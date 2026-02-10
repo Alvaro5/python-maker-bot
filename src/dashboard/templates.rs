@@ -1,9 +1,8 @@
 use askama::Template;
 
-use crate::config::AppConfig;
 use crate::logger::SessionMetrics;
-use super::routes::ContainerInfo;
-use super::state::ScriptEntry;
+use super::routes::{ChatMessageView, ContainerInfo, SessionListEntry};
+use super::state::{RuntimeSettings, ScriptEntry};
 
 // ── Askama Templates ─────────────────────────────────────────────────
 
@@ -22,6 +21,9 @@ pub struct IndexTemplate<'a> {
     pub api_errors: usize,
     pub success_rate: f64,
     pub last_code: &'a str,
+    pub sessions: &'a [SessionListEntry],
+    pub active_session_id: &'a str,
+    pub messages: &'a [ChatMessageView],
 }
 
 #[derive(Template)]
@@ -55,17 +57,20 @@ pub struct ContainersTemplate<'a> {
 // ── Render helpers (called from routes.rs) ───────────────────────────
 
 pub fn render_index(
-    config: &AppConfig,
+    settings: &RuntimeSettings,
     scripts: &[ScriptEntry],
     metrics: &SessionMetrics,
     last_code: &str,
+    sessions: &[SessionListEntry],
+    active_session_id: &str,
+    messages: &[ChatMessageView],
 ) -> axum::response::Html<String> {
     let template = IndexTemplate {
-        provider: &config.provider,
-        model: &config.model,
-        docker_enabled: config.use_docker,
-        venv_enabled: config.use_venv,
-        dashboard_port: config.dashboard_port,
+        provider: &settings.provider,
+        model: &settings.model,
+        docker_enabled: settings.use_docker,
+        venv_enabled: settings.use_venv,
+        dashboard_port: 0, // Not used in new template
         scripts,
         total_requests: metrics.total_requests,
         successful_executions: metrics.successful_executions,
@@ -73,9 +78,16 @@ pub fn render_index(
         api_errors: metrics.api_errors,
         success_rate: metrics.success_rate(),
         last_code,
+        sessions,
+        active_session_id,
+        messages,
     };
     axum::response::Html(template.render().unwrap_or_else(|e| {
-        let msg = e.to_string().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let msg = e
+            .to_string()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
         format!("<h1>Template error: {}</h1>", msg)
     }))
 }

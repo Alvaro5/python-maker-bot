@@ -1,11 +1,10 @@
 {% for script in scripts %}
 <button type="button"
-        class="w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-800 text-gray-300 truncate"
+        class="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-gray-800 text-gray-400 truncate"
         data-script="{{ script.filename }}">
-    <span class="text-gray-500 text-xs block">{{ script.timestamp }}</span>
     {{ script.filename }}
 </button>
 {% endfor %}
 {% if scripts.is_empty() %}
-<p class="text-sm text-gray-600 px-3 py-2">No scripts yet.</p>
+<p class="text-xs text-gray-600 px-3 py-2">No scripts yet.</p>
 {% endif %}
