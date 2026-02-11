@@ -1,14 +1,18 @@
 {% if containers.is_empty() %}
-<p class="text-sm text-gray-600">No active containers.</p>
+<p class="text-[10px] text-slate-600 text-center py-2 italic">No active containers</p>
 {% else %}
 <div class="space-y-2">
     {% for c in containers %}
-    <div class="p-2 bg-gray-800 rounded text-xs">
-        <div class="flex justify-between">
-            <span class="text-cyan-400 font-mono">{{ c.id }}</span>
-            <span class="text-green-400">{{ c.status }}</span>
+    <div class="p-2 bg-slate-800/80 rounded border border-indigo-500/20 shadow-sm relative group overflow-hidden">
+        <div class="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-indigo-500 to-purple-500 opacity-50"></div>
+        <div class="flex justify-between items-center mb-1">
+            <span class="text-[10px] font-mono text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded">{{ c.id }}</span>
+            <span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                {{ c.status }}
+            </span>
         </div>
-        <div class="text-gray-500 mt-1">{{ c.names }}</div>
+        <div class="text-[11px] text-slate-400 font-medium truncate" title="{{ c.names }}">{{ c.names }}</div>
     </div>
     {% endfor %}
 </div>

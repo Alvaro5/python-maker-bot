@@ -6,37 +6,81 @@
     <title>Python Maker Bot — Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <!-- highlight.js — loaded in head so hljs is available to the main script -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+    <!-- highlight.js -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/tokyo-night-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/python.min.js"></script>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-color: #020617; /* slate-950 */
+            --panel-bg: rgba(15, 23, 42, 0.6); /* slate-900/60 */
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-color); }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
         .monaco-container { width: 100%; height: 100%; }
-        .toast { animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards; }
-        @keyframes slideIn { from { transform: translateY(-20px); opacity:0; } to { transform: translateY(0); opacity:1; } }
-        @keyframes fadeOut { to { opacity: 0; } }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1a1a2e; }
-        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        /* Animations */
+        @keyframes slideInUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .animate-slide-in { animation: slideInUp 0.3s ease-out forwards; }
+        
+        .toast { animation: slideInToast 0.3s ease, fadeOutToast 0.3s ease 2.7s forwards; }
+        @keyframes slideInToast { from { transform: translateY(-20px) translateX(-50%); opacity:0; } to { transform: translateY(0) translateX(-50%); opacity:1; } }
+        @keyframes fadeOutToast { to { opacity: 0; } }
+
+        /* Typing Indicator */
         .typing-dot { animation: typingBounce 1.4s infinite ease-in-out both; }
         .typing-dot:nth-child(1) { animation-delay: -0.32s; }
         .typing-dot:nth-child(2) { animation-delay: -0.16s; }
         @keyframes typingBounce { 0%,80%,100% { transform: scale(0); } 40% { transform: scale(1); } }
-        .chat-msg-user { background: #1e3a5f; border-radius: 16px 16px 4px 16px; }
-        .chat-msg-bot { background: #1f2937; border-radius: 16px 16px 16px 4px; }
-        .modal-backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+
+        /* Chat Bubbles */
+        .chat-msg-user { 
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); 
+            border-radius: 18px 18px 2px 18px; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .chat-msg-bot { 
+            background: rgba(30, 41, 59, 0.7); 
+            border: 1px solid rgba(255,255,255,0.05);
+            backdrop-filter: blur(8px);
+            border-radius: 18px 18px 18px 2px; 
+        }
+
+        /* Glassmorphism Classes */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-header {
+            background: rgba(2, 6, 23, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .modal-backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
-        .htmx-request.htmx-indicator { display: inline-block; }
-        .resize-handle { cursor: row-resize; }
-        .resize-handle:hover { background: #22d3ee33; }
-        pre code { background: transparent !important; padding: 0 !important; font-size: 13px; }
+        .resize-handle { cursor: row-resize; transition: background 0.2s; }
+        .resize-handle:hover { background: #6366f1; } /* indigo-500 */
+        
+        pre code { background: transparent !important; padding: 0 !important; font-size: 13px; font-family: 'JetBrains Mono', monospace; }
         .icon { display: inline-block; vertical-align: middle; flex-shrink: 0; }
     </style>
 </head>
-<body class="h-full bg-gray-950 text-gray-100 font-sans overflow-hidden">
+<body class="h-full text-slate-300 overflow-hidden flex">
 
-<!-- SVG Icon Sprite (hidden) -->
+<!-- SVG Icons -->
 <svg xmlns="http://www.w3.org/2000/svg" class="hidden">
   <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
@@ -61,126 +105,140 @@
   <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
 </svg>
 
-<!-- Toast container -->
-<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+<!-- Toast -->
+<div id="toast-container" class="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 space-y-2 pointer-events-none"></div>
 
 <!-- Settings Modal -->
-<div id="settings-modal" class="hidden fixed inset-0 z-40 modal-backdrop flex items-center justify-center">
-    <div class="bg-gray-900 border border-gray-700 rounded-xl w-[520px] max-h-[80vh] overflow-y-auto shadow-2xl">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-            <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                <svg class="icon w-5 h-5 text-gray-400"><use href="#i-settings"/></svg>
+<div id="settings-modal" class="hidden fixed inset-0 z-40 modal-backdrop flex items-center justify-center p-4">
+    <div class="glass-panel border border-slate-700/50 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl relative animate-slide-in">
+        <div class="flex items-center justify-between px-6 py-5 border-b border-slate-700/50">
+            <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                <svg class="icon w-5 h-5 text-indigo-400"><use href="#i-settings"/></svg>
                 Settings
             </h2>
-            <button onclick="closeSettings()" class="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-800">
+            <button onclick="closeSettings()" class="text-slate-400 hover:text-white transition-colors bg-slate-800/50 hover:bg-slate-700/80 p-1.5 rounded-lg">
                 <svg class="icon w-5 h-5"><use href="#i-x"/></svg>
             </button>
         </div>
-        <div class="p-6 space-y-5">
+        <div class="p-6 space-y-6">
+            <!-- Provider -->
             <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">Provider</label>
-                <select id="s-provider" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-cyan-500 focus:outline-none">
-                    <option value="huggingface">HuggingFace</option>
-                    <option value="ollama">Ollama (local)</option>
-                    <option value="openai-compatible">OpenAI-compatible</option>
-                </select>
+                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Provider</label>
+                <div class="relative">
+                    <select id="s-provider" class="w-full bg-slate-900/80 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none appearance-none transition-all">
+                        <option value="huggingface">HuggingFace</option>
+                        <option value="ollama">Ollama (local)</option>
+                        <option value="openai-compatible">OpenAI-compatible</option>
+                    </select>
+                    <svg class="icon w-4 h-4 text-slate-500 absolute right-4 top-1/2 transform -translate-y-1/2 pointer-events-none"><use href="#i-chevron-down"/></svg>
+                </div>
             </div>
+            
+            <!-- Model -->
             <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">Model <span id="s-model-count" class="text-gray-600 text-xs"></span></label>
+                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Model <span id="s-model-count" class="text-slate-600 text-[10px] ml-1"></span></label>
                 <div class="flex gap-2">
                     <div class="flex-1 relative" id="model-dropdown-wrapper">
                         <input id="s-model-search" type="text" autocomplete="off"
-                               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-cyan-500 focus:outline-none text-sm"
-                               placeholder="Search models..."
+                               class="w-full bg-slate-900/80 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none text-sm placeholder-slate-600 font-mono transition-all"
+                               placeholder="Search or enter model ID..."
                                onfocus="showModelDropdown()" oninput="filterModels()">
                         <input id="s-model" type="hidden" value="">
-                        <div id="s-model-list" class="hidden absolute z-50 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg max-h-60 overflow-y-auto shadow-xl"></div>
+                        <div id="s-model-list" class="hidden absolute z-50 mt-2 w-full bg-slate-900 border border-slate-700/50 rounded-xl max-h-60 overflow-y-auto shadow-2xl backdrop-blur-xl"></div>
                     </div>
-                    <button onclick="refreshModels()" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-300" title="Refresh models">
-                        <svg class="icon w-4 h-4"><use href="#i-refresh"/></svg>
+                    <button onclick="refreshModels()" class="px-3.5 bg-slate-800/80 hover:bg-slate-700 hover:text-white border border-slate-700/50 rounded-xl text-slate-400 transition-all flex items-center justify-center" title="Refresh list">
+                        <svg class="icon w-5 h-5"><use href="#i-refresh"/></svg>
                     </button>
                 </div>
             </div>
+
+            <!-- API URL -->
             <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">API URL</label>
-                <input id="s-api-url" type="text" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-cyan-500 focus:outline-none" placeholder="https://...">
+                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">API URL</label>
+                <input id="s-api-url" type="text" class="w-full bg-slate-900/80 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none placeholder-slate-600 text-sm font-mono transition-all" placeholder="https://...">
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">Temperature: <span id="s-temp-val">0.2</span></label>
-                <input id="s-temperature" type="range" min="0" max="1" step="0.05" value="0.2" class="w-full accent-cyan-500"
-                       oninput="document.getElementById('s-temp-val').textContent=this.value">
+
+            <!-- Sliders & Inputs -->
+            <div class="grid grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Temperature: <span id="s-temp-val" class="text-indigo-400">0.2</span></label>
+                    <input id="s-temperature" type="range" min="0" max="1" step="0.05" value="0.2" class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Max Tokens</label>
+                    <input id="s-max-tokens" type="number" min="256" max="65536" value="16384" class="w-full bg-slate-900/80 border border-slate-700/50 rounded-xl px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-none text-sm text-center">
+                </div>
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">Max Tokens</label>
-                <input id="s-max-tokens" type="number" min="256" max="65536" value="16384" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-cyan-500 focus:outline-none">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-1">Execution Timeout (seconds, 0 = no limit)</label>
-                <input id="s-timeout" type="number" min="0" value="30" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-cyan-500 focus:outline-none">
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input id="s-docker" type="checkbox" class="accent-cyan-500 w-4 h-4">
-                    <span class="text-sm text-gray-300">Docker sandbox</span>
+
+            <div class="p-4 bg-slate-900/40 rounded-xl border border-slate-700/30 grid grid-cols-2 gap-4">
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <input id="s-docker" type="checkbox" class="w-5 h-5 rounded border-slate-600 text-indigo-500 focus:ring-offset-0 focus:ring-indigo-500/50 bg-slate-800">
+                    <span class="text-sm text-slate-300 group-hover:text-white transition-colors">Docker Sandbox</span>
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input id="s-venv" type="checkbox" checked class="accent-cyan-500 w-4 h-4">
-                    <span class="text-sm text-gray-300">Virtual env isolation</span>
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <input id="s-venv" type="checkbox" checked class="w-5 h-5 rounded border-slate-600 text-indigo-500 focus:ring-offset-0 focus:ring-indigo-500/50 bg-slate-800">
+                    <span class="text-sm text-slate-300 group-hover:text-white transition-colors">Venv Isolation</span>
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input id="s-linting" type="checkbox" checked class="accent-cyan-500 w-4 h-4">
-                    <span class="text-sm text-gray-300">Lint check (ruff)</span>
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <input id="s-linting" type="checkbox" checked class="w-5 h-5 rounded border-slate-600 text-indigo-500 focus:ring-offset-0 focus:ring-indigo-500/50 bg-slate-800">
+                    <span class="text-sm text-slate-300 group-hover:text-white transition-colors">Ruff Linting</span>
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input id="s-security" type="checkbox" checked class="accent-cyan-500 w-4 h-4">
-                    <span class="text-sm text-gray-300">Security scan (bandit)</span>
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <input id="s-security" type="checkbox" checked class="w-5 h-5 rounded border-slate-600 text-indigo-500 focus:ring-offset-0 focus:ring-indigo-500/50 bg-slate-800">
+                    <span class="text-sm text-slate-300 group-hover:text-white transition-colors">Bandit Security</span>
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input id="s-auto-deps" type="checkbox" class="accent-cyan-500 w-4 h-4">
-                    <span class="text-sm text-gray-300">Auto-install deps</span>
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <input id="s-auto-deps" type="checkbox" class="w-5 h-5 rounded border-slate-600 text-indigo-500 focus:ring-offset-0 focus:ring-indigo-500/50 bg-slate-800">
+                    <span class="text-sm text-slate-300 group-hover:text-white transition-colors">Auto-Install Deps</span>
+                </label>
+                <label class="flex items-center gap-3">
+                    <span class="text-xs text-slate-500 uppercase">Timeout</span>
+                    <input id="s-timeout" type="number" min="0" value="30" class="w-16 bg-slate-800 border-none rounded text-xs text-center text-slate-300 focus:ring-1 focus:ring-indigo-500/50">
+                    <span class="text-xs text-slate-500">sec</span>
                 </label>
             </div>
         </div>
-        <div class="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
-            <button onclick="closeSettings()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm">Cancel</button>
-            <button onclick="saveSettings()" class="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-sm font-semibold">Save</button>
+        <div class="px-6 py-4 border-t border-slate-700/50 flex justify-end gap-3 bg-slate-900/30">
+            <button onclick="closeSettings()" class="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-all">Cancel</button>
+            <button onclick="saveSettings()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-500/20 transition-all">Save Changes</button>
         </div>
     </div>
 </div>
 
-<!-- Main Layout: 3 panels -->
-<div class="flex h-full">
+<!-- Main Layout -->
+<div class="flex-1 flex min-h-0">
 
     <!-- LEFT SIDEBAR -->
-    <aside class="w-60 bg-gray-900 border-r border-gray-800 flex flex-col flex-shrink-0">
-        <div class="p-4 border-b border-gray-800">
-            <div class="flex items-center gap-2">
-                <svg class="icon w-5 h-5 text-cyan-400"><use href="#i-zap"/></svg>
-                <h1 class="text-lg font-bold text-cyan-400">Python Maker Bot</h1>
+    <aside class="w-[280px] glass-panel border-r-0 border-r-slate-800/50 flex flex-col flex-shrink-0 z-20">
+        <!-- Brand -->
+        <div class="h-16 flex items-center px-6 border-b border-white/5">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <svg class="icon w-5 h-5 text-white"><use href="#i-zap"/></svg>
+                </div>
+                <div>
+                    <h1 class="text-sm font-bold text-white tracking-wide">Maker Bot</h1>
+                    <p class="text-[10px] text-indigo-400 font-medium uppercase tracking-wider">v0.3.0 Dashboard</p>
+                </div>
             </div>
-            <p class="text-xs text-gray-500 mt-0.5 ml-7">Dashboard v2.0</p>
         </div>
 
         <!-- Sessions -->
-        <div class="p-2 border-b border-gray-800">
-            <div class="flex items-center justify-between px-2 py-1">
-                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="icon w-3.5 h-3.5"><use href="#i-message"/></svg> Chats
-                </span>
-                <button onclick="createSession()" class="text-cyan-400 hover:text-cyan-300 p-0.5 rounded hover:bg-gray-800" title="New Chat">
+        <div class="p-4 border-b border-white/5">
+            <div class="flex items-center justify-between mb-2 px-2">
+                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sessions</span>
+                <button onclick="createSession()" class="text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 p-1 rounded-md transition-colors" title="New Chat">
                     <svg class="icon w-4 h-4"><use href="#i-plus"/></svg>
                 </button>
             </div>
-            <div id="session-list" class="mt-1 space-y-0.5 max-h-[30vh] overflow-y-auto">
+            <div id="session-list" class="space-y-1 max-h-[25vh] overflow-y-auto pr-1">
                 {% for s in sessions %}
-                <div class="group flex items-center rounded hover:bg-gray-800 {% if s.id == active_session_id %}bg-gray-800{% endif %}"
+                <div class="group flex items-center rounded-lg {% if s.id == active_session_id %}bg-slate-800/80 text-white{% else %}text-slate-400 hover:bg-slate-800/40 hover:text-slate-300{% endif %} transition-colors"
                      data-session-id="{{ s.id }}">
-                    <button class="flex-1 text-left px-3 py-2 text-sm truncate {% if s.id == active_session_id %}text-cyan-400{% else %}text-gray-300{% endif %}"
-                            onclick="switchSession('{{ s.id }}')">
+                    <button class="flex-1 text-left px-3 py-2 text-xs truncate" onclick="switchSession('{{ s.id }}')">
                         {{ s.name }}
                     </button>
-                    <button class="hidden group-hover:block px-2 text-gray-600 hover:text-red-400"
-                            onclick="deleteSession('{{ s.id }}')" title="Delete">
+                    <button class="opacity-0 group-hover:opacity-100 px-2 text-slate-500 hover:text-red-400 transition-opacity" onclick="deleteSession('{{ s.id }}')">
                         <svg class="icon w-3.5 h-3.5"><use href="#i-trash"/></svg>
                     </button>
                 </div>
@@ -188,191 +246,195 @@
             </div>
         </div>
 
-        <!-- Script History (collapsible) -->
-        <div class="flex-1 flex flex-col min-h-0">
-            <button onclick="this.nextElementSibling.classList.toggle('hidden')"
-                    class="flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 w-full">
-                <span class="flex items-center gap-1.5">
-                    <svg class="icon w-3.5 h-3.5"><use href="#i-file-text"/></svg> Script History
-                </span>
-                <svg class="icon w-3.5 h-3.5"><use href="#i-chevron-down"/></svg>
-            </button>
+        <!-- Script History -->
+        <div class="flex-1 flex flex-col min-h-0 p-4">
+            <div class="flex items-center justify-between mb-2 px-2">
+                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Generated Scripts</span>
+            </div>
             <div id="history-list"
-                 class="flex-1 overflow-y-auto px-2 pb-2"
+                 class="flex-1 overflow-y-auto pr-1 space-y-1"
                  hx-get="/api/history/html"
                  hx-trigger="load, every 15s, historyRefresh"
                  hx-swap="innerHTML">
-                {% for script in scripts %}
-                <button type="button"
-                        class="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-gray-800 text-gray-400 truncate"
-                        data-script="{{ script.filename }}">
-                    {{ script.filename }}
-                </button>
-                {% endfor %}
+                <!-- HTMX populated -->
             </div>
         </div>
 
-        <!-- Bottom: stats + settings -->
-        <div class="border-t border-gray-800">
-            <div class="p-3" id="stats-panel"
-                 hx-get="/api/stats/html"
-                 hx-trigger="load, every 10s"
-                 hx-swap="innerHTML">
+        <!-- Footer Stats -->
+        <div class="p-4 mt-auto border-t border-white/5 bg-slate-900/30">
+            <div id="stats-panel" hx-get="/api/stats/html" hx-trigger="load, every 10s" hx-swap="innerHTML">
+                 <!-- HTMX populated -->
             </div>
-            <button onclick="openSettings()"
-                    class="w-full px-4 py-2.5 border-t border-gray-800 text-sm text-gray-400 hover:text-white hover:bg-gray-800 flex items-center gap-2">
-                <svg class="icon w-4 h-4"><use href="#i-settings"/></svg> Settings
+            <button onclick="openSettings()" class="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg transition-all border border-slate-700/50">
+                <svg class="icon w-4 h-4"><use href="#i-settings"/></svg> Preferences
             </button>
         </div>
     </aside>
 
     <!-- CENTER: CHAT -->
-    <main class="flex-1 flex flex-col min-w-0">
-        <header class="px-4 py-2 bg-gray-900 border-b border-gray-800 flex items-center gap-3 text-sm flex-shrink-0">
-            <span class="text-gray-500">Provider:</span>
-            <span class="text-green-400" id="header-provider">{{ provider }}</span>
-            <span class="text-gray-700">|</span>
-            <span class="text-gray-500">Model:</span>
-            <span class="text-white" id="header-model">{{ model }}</span>
-            <div class="ml-auto flex gap-2">
+    <main class="flex-1 flex flex-col min-w-0 bg-[#0B101E] relative z-10">
+        <!-- Header -->
+        <header class="glass-header h-16 px-6 flex items-center justify-between">
+            <div class="flex items-center gap-4 text-xs">
+                <div class="flex flex-col">
+                    <span class="text-slate-500 font-medium">Provider</span>
+                    <span class="text-indigo-400 font-semibold" id="header-provider">{{ provider }}</span>
+                </div>
+                <div class="h-6 w-px bg-slate-800"></div>
+                <div class="flex flex-col">
+                    <span class="text-slate-500 font-medium">Model</span>
+                    <span class="text-slate-200 font-medium" id="header-model">{{ model }}</span>
+                </div>
+            </div>
+            <div class="flex gap-2">
                 {% if docker_enabled %}
-                <span class="px-2 py-0.5 bg-blue-900/40 text-blue-400 rounded text-xs flex items-center gap-1">
+                <span class="px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-md text-[10px] font-bold uppercase tracking-wide flex items-center gap-1.5">
                     <svg class="icon w-3 h-3"><use href="#i-box"/></svg> Docker
                 </span>
                 {% endif %}
                 {% if venv_enabled %}
-                <span class="px-2 py-0.5 bg-green-900/40 text-green-400 rounded text-xs">venv</span>
+                 <span class="px-2.5 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-md text-[10px] font-bold uppercase tracking-wide">
+                    VENV
+                </span>
                 {% endif %}
             </div>
         </header>
 
-        <!-- Chat messages -->
-        <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+        <!-- Messages -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth">
             {% if messages.is_empty() %}
-            <div id="chat-placeholder" class="flex items-center justify-center h-full text-gray-600">
-                <div class="text-center">
-                    <svg class="icon w-12 h-12 mx-auto mb-3 text-gray-700"><use href="#i-message"/></svg>
-                    <p class="text-lg">Start a conversation</p>
-                    <p class="text-sm mt-1 text-gray-700">Describe the Python code you want to generate</p>
+            <div id="chat-placeholder" class="flex flex-col items-center justify-center h-full text-slate-600 animate-slide-in">
+                <div class="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mb-4 shadow-xl shadow-black/20 border border-slate-800">
+                    <svg class="icon w-8 h-8 text-indigo-500"><use href="#i-message"/></svg>
                 </div>
+                <h3 class="text-lg font-semibold text-slate-300">Ready to code?</h3>
+                <p class="text-sm text-slate-500 mt-1 max-w-xs text-center">Describe the Python script you want to build, and I'll generate it for you.</p>
             </div>
             {% else %}
-            {% for msg in messages %}
-            {% if msg.role == "user" %}
-            <div class="flex justify-end">
-                <div class="chat-msg-user px-4 py-3 max-w-[70%] text-sm whitespace-pre-wrap">{{ msg.content }}</div>
-            </div>
-            {% else %}
-            <div class="flex justify-start">
-                <div class="chat-msg-bot px-4 py-3 max-w-[80%] text-sm">
-                    <pre class="overflow-x-auto"><code class="language-python">{{ msg.content }}</code></pre>
-                    <button onclick="loadCodeInEditor(this.closest('.chat-msg-bot').querySelector('code').textContent)"
-                            class="mt-2 text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1">
-                        Load in editor <svg class="icon w-3 h-3"><use href="#i-arrow-right"/></svg>
-                    </button>
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
+                {% for msg in messages %}
+                    {% if msg.role == "user" %}
+                    <div class="flex justify-end animate-slide-in">
+                        <div class="chat-msg-user px-5 py-3.5 max-w-[70%] text-sm text-white font-medium shadow-lg leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
+                    </div>
+                    {% else %}
+                    <div class="flex justify-start animate-slide-in">
+                        <div class="chat-msg-bot px-5 py-4 max-w-[85%] text-sm shadow-xl">
+                            <pre class="overflow-x-auto custom-scrollbar"><code class="language-python rounded-lg">{{ msg.content }}</code></pre>
+                            <div class="mt-3 pt-3 border-t border-white/5 flex justify-end">
+                                <button onclick="loadCodeInEditor(this.closest('.chat-msg-bot').querySelector('code').textContent)"
+                                        class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1.5 transition-colors">
+                                    Load in Editor <svg class="icon w-3.5 h-3.5"><use href="#i-arrow-right"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                {% endfor %}
             {% endif %}
         </div>
 
-        <!-- Prompt bar -->
-        <div class="p-3 bg-gray-900/70 border-t border-gray-800 flex-shrink-0">
-            <form id="prompt-form" class="flex gap-2" onsubmit="return handleSubmit(event)">
-                <textarea id="prompt-input"
-                          rows="2"
-                          class="flex-1 p-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 resize-none focus:outline-none focus:border-cyan-600 text-sm"
-                          placeholder="Describe the Python code you want..."
-                          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit()}"></textarea>
-                <button type="submit" id="send-btn"
-                        class="px-5 py-2 bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-xl font-semibold transition-colors self-end flex items-center gap-2">
-                    <svg class="icon w-4 h-4"><use href="#i-send"/></svg> Send
-                </button>
-            </form>
+        <!-- Input Area -->
+        <div class="p-6 pt-2">
+            <div class="glass-panel rounded-2xl p-2 border border-slate-700/50 shadow-2xl shadow-indigo-500/5 focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all">
+                <form id="prompt-form" class="flex gap-2" onsubmit="return handleSubmit(event)">
+                    <textarea id="prompt-input"
+                              rows="1"
+                              class="flex-1 bg-transparent border-none text-slate-200 placeholder-slate-500 resize-none focus:ring-0 text-sm py-3 px-3"
+                              placeholder="Describe your Python script..."
+                              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit()}"></textarea>
+                    <button type="submit" id="send-btn"
+                            class="px-5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-indigo-600/20 flex items-center justify-center">
+                        <svg class="icon w-5 h-5"><use href="#i-send"/></svg>
+                    </button>
+                </form>
+            </div>
         </div>
     </main>
 
-    <!-- RIGHT PANEL: CODE EDITOR + TERMINAL -->
-    <aside class="w-[440px] bg-gray-900 border-l border-gray-800 flex flex-col flex-shrink-0">
-
-        <!-- Editor toolbar -->
-        <div class="px-3 py-2 border-b border-gray-800 flex items-center gap-1.5 flex-shrink-0">
-            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider mr-auto flex items-center gap-1.5">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-code"/></svg> Code Editor
+    <!-- RIGHT PANEL: EDITOR & TERMINAL -->
+    <aside class="w-[500px] glass-panel border-l border-slate-700/50 flex flex-col flex-shrink-0 z-20">
+        
+        <!-- Toolbar -->
+        <div class="h-12 px-4 border-b border-white/5 flex items-center gap-2 bg-slate-900/50">
+            <span class="text-xs font-bold text-slate-500 uppercase tracking-widest mr-auto flex items-center gap-2">
+                <svg class="icon w-4 h-4 text-indigo-400"><use href="#i-code"/></svg> Editor
             </span>
-            <button onclick="copyCode()" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs text-gray-300 flex items-center gap-1" title="Copy code">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-copy"/></svg> Copy
-            </button>
-            <button onclick="downloadCode()" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs text-gray-300 flex items-center gap-1" title="Download .py">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-download"/></svg> .py
-            </button>
-            <button onclick="runCode()" id="btn-run" class="px-2 py-1 bg-green-800 hover:bg-green-700 rounded text-xs text-green-300 font-semibold flex items-center gap-1" title="Execute code (Ctrl+Shift+Enter)">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-play"/></svg> Run
-            </button>
-            <button onclick="stopCode()" id="btn-stop" disabled class="px-2 py-1 bg-red-900/50 hover:bg-red-800 disabled:opacity-30 rounded text-xs text-red-300 font-semibold flex items-center gap-1" title="Kill execution">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-stop"/></svg> Stop
-            </button>
-            <button onclick="lintCode()" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs text-yellow-300 flex items-center gap-1" title="Run ruff lint">
+            
+            <div class="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+                <button onclick="copyCode()" class="px-2.5 py-1.5 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white transition-colors" title="Copy">
+                    <svg class="icon w-3.5 h-3.5"><use href="#i-copy"/></svg>
+                </button>
+                <button onclick="downloadCode()" class="px-2.5 py-1.5 hover:bg-slate-800 rounded-md text-slate-400 hover:text-white transition-colors" title="Download">
+                    <svg class="icon w-3.5 h-3.5"><use href="#i-download"/></svg>
+                </button>
+            </div>
+            
+            <div class="h-5 w-px bg-slate-800 mx-1"></div>
+
+            <button onclick="lintCode()" class="px-3 py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 hover:text-yellow-400 border border-yellow-500/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all">
                 <svg class="icon w-3.5 h-3.5"><use href="#i-check-circle"/></svg> Lint
             </button>
-            <button onclick="securityScan()" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs text-orange-300 flex items-center gap-1" title="Run bandit scan">
-                <svg class="icon w-3.5 h-3.5"><use href="#i-shield"/></svg> Sec
+            <button onclick="securityScan()" class="px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 hover:text-orange-400 border border-orange-500/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all">
+                <svg class="icon w-3.5 h-3.5"><use href="#i-shield"/></svg> Scan
+            </button>
+
+            <button onclick="runCode()" id="btn-run" class="ml-1 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 transition-all">
+                <svg class="icon w-3.5 h-3.5"><use href="#i-play"/></svg> Run
+            </button>
+            <button onclick="stopCode()" id="btn-stop" disabled class="hidden px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 rounded-lg text-xs font-bold transition-all items-center gap-1.5">
+                <svg class="icon w-3.5 h-3.5"><use href="#i-stop"/></svg> Stop
             </button>
         </div>
 
-        <!-- Monaco Editor container -->
-        <div id="monaco-container" class="flex-1 min-h-0" style="min-height:200px;"></div>
+        <!-- Monaco -->
+        <div id="monaco-container" class="flex-1 min-h-[300px] bg-[#1e1e1e]"></div>
 
-        <!-- Resize handle -->
-        <div class="resize-handle h-1.5 bg-gray-800 border-y border-gray-700 flex-shrink-0"></div>
+        <!-- Resizer -->
+        <div class="resize-handle h-1 bg-slate-800 hover:bg-indigo-500/50 border-y border-slate-900/50 flex-shrink-0"></div>
 
-        <!-- Execution output / terminal -->
-        <div class="flex flex-col" style="height:260px; min-height:120px;">
-            <div class="px-3 py-1.5 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
-                <h3 class="text-xs font-semibold text-green-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <svg class="icon w-3.5 h-3.5"><use href="#i-terminal"/></svg> Output
+        <!-- Terminal -->
+        <div class="flex flex-col h-[240px] flex-shrink-0 bg-[#0d0d0d]">
+             <div class="h-8 px-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                <h3 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                    <svg class="icon w-3.5 h-3.5 text-emerald-500"><use href="#i-terminal"/></svg> Terminal Output
                 </h3>
-                <button onclick="clearTerminal()" class="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1">
-                    <svg class="icon w-3 h-3"><use href="#i-trash"/></svg> Clear
-                </button>
+                <button onclick="clearTerminal()" class="text-[10px] text-slate-600 hover:text-slate-400 uppercase font-semibold">Clear</button>
             </div>
-            <div id="log-output" class="flex-1 overflow-y-auto p-2 text-xs font-mono bg-black space-y-0.5">
-                <div class="text-gray-600 italic">Waiting for execution events...</div>
+            
+            <div id="log-output" class="flex-1 overflow-y-auto p-3 text-xs font-mono space-y-1">
+                <div class="text-slate-700 italic">Waiting for execution...</div>
             </div>
-            <!-- Stdin input bar (visible when executing) -->
-            <div id="stdin-bar" class="hidden border-t border-gray-700 bg-gray-900 px-2 py-1.5 flex items-center gap-2 flex-shrink-0">
-                <span class="text-yellow-400 text-xs font-mono">&gt;</span>
+
+            <!-- Stdin -->
+            <div id="stdin-bar" class="hidden border-t border-slate-800 bg-slate-900 p-2 flex items-center gap-2">
+                <span class="text-yellow-500 text-xs font-mono">➜</span>
                 <input id="stdin-input" type="text"
-                       class="flex-1 bg-black text-green-300 text-xs font-mono px-2 py-1 rounded border border-gray-700 focus:border-yellow-500 focus:outline-none"
-                       placeholder="Type input and press Enter..."
+                       class="flex-1 bg-black text-slate-200 text-xs font-mono px-3 py-1.5 rounded border border-slate-800 focus:border-yellow-500/50 focus:outline-none placeholder-slate-700"
+                       placeholder="Enter input..."
                        onkeydown="if(event.key==='Enter') sendStdinInput();" />
-                <button onclick="sendStdinInput()"
-                        class="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-black text-xs font-semibold rounded flex items-center gap-1">
-                    <svg class="icon w-3 h-3"><use href="#i-send"/></svg> Send
-                </button>
+                <button onclick="sendStdinInput()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded border border-slate-700">Send</button>
             </div>
         </div>
 
-        <!-- Docker containers (collapsed) -->
-        <div class="border-t border-gray-800">
-            <button onclick="this.nextElementSibling.classList.toggle('hidden')"
-                    class="w-full px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 flex items-center justify-between">
-                <span class="flex items-center gap-1.5">
-                    <svg class="icon w-3.5 h-3.5"><use href="#i-box"/></svg> Docker Containers
+        <!-- Containers (Hidden by default) -->
+        <div class="bg-slate-900 border-t border-slate-800">
+             <button onclick="this.nextElementSibling.classList.toggle('hidden')"
+                     class="w-full px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-300 hover:bg-slate-800 flex items-center justify-between transition-colors">
+                <span class="flex items-center gap-2">
+                    <svg class="icon w-3.5 h-3.5"><use href="#i-box"/></svg> Active Containers
                 </span>
                 <svg class="icon w-3.5 h-3.5"><use href="#i-chevron-down"/></svg>
             </button>
-            <div class="hidden px-3 pb-2" id="containers-panel"
-                 hx-get="/api/containers/html"
-                 hx-trigger="load, every 15s"
-                 hx-swap="innerHTML">
+            <div class="hidden px-2 pb-2 bg-slate-950/50" id="containers-panel"
+                 hx-get="/api/containers/html" hx-trigger="load, every 15s" hx-swap="innerHTML">
+                 <!-- HTMX -->
             </div>
         </div>
     </aside>
+
 </div>
 
-<!-- Monaco Editor Loader -->
+<!-- Monaco Loader -->
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
 <script>
 // ══ Global State ══════════════════════════════════════════════════════
@@ -384,37 +446,111 @@ var modelsData = null;
 // ══ Monaco Editor Setup ══════════════════════════════════════════════
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
 require(['vs/editor/editor.main'], function () {
+    monaco.editor.defineTheme('custom-dark', {
+        base: 'vs-dark',
+        inherit: true,
+        rules: [{ background: '1e1e1e' }],
+        colors: { 'editor.background': '#1e1e1e' }
+    });
+    
     editor = monaco.editor.create(document.getElementById('monaco-container'), {
         value: {{ last_code|json|safe }},
         language: 'python',
-        theme: 'vs-dark',
+        theme: 'custom-dark',
         minimap: { enabled: false },
         wordWrap: 'on',
         fontSize: 13,
+        fontFamily: "'JetBrains Mono', monospace",
         lineNumbers: 'on',
         scrollBeyondLastLine: false,
         automaticLayout: true,
-        padding: { top: 8 },
+        padding: { top: 16, bottom: 16 },
+        renderLineHighlight: 'none',
     });
-    // Highlight server-rendered code blocks now that everything is loaded
+    // Syntax highlight existing messages
     document.querySelectorAll('#chat-messages pre code').forEach(function(el) {
         if (window.hljs) hljs.highlightElement(el);
     });
 });
 
+// Resizable functionality
+const resizer = document.querySelector('.resize-handle');
+const terminal = resizer.nextElementSibling;
+const container = document.getElementById('monaco-container');
+let isResizing = false;
+
+resizer.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    document.body.style.cursor = 'row-resize';
+});
+document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const h = window.innerHeight - e.clientY;
+    if (h > 100 && h < window.innerHeight - 200) {
+        terminal.style.height = h + 'px';
+    }
+});
+document.addEventListener('mouseup', () => {
+    isResizing = false;
+    document.body.style.cursor = '';
+});
+
+
+/* ══ Helper Functions (Toast, Formatting) ══ */
+function showToast(msg, type='info') {
+    var c = document.getElementById('toast-container');
+    var d = document.createElement('div');
+    var colors = {
+        'success': 'bg-emerald-500/90 text-white',
+        'error': 'bg-red-500/90 text-white',
+        'warning': 'bg-amber-500/90 text-white',
+        'info': 'bg-indigo-600/90 text-white'
+    };
+    d.className = `toast px-4 py-2 rounded-lg shadow-xl text-sm font-medium backdrop-blur-sm ${colors[type] || colors.info} flex items-center gap-2 pointer-events-auto`;
+    d.innerHTML = msg;
+    c.appendChild(d);
+    setTimeout(() => d.remove(), 3000);
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+function appendLog(type, msg) {
+    var out = document.getElementById('log-output');
+    if (out.children.length === 1 && out.children[0].classList.contains('italic')) out.innerHTML = '';
+    
+    var div = document.createElement('div');
+    div.className = 'font-mono break-all leading-tight';
+    
+    if (type === 'stdout') div.className += ' text-slate-300';
+    else if (type === 'stderr') div.className += ' text-red-400';
+    else if (type === 'success') div.className += ' text-emerald-400 font-bold';
+    else if (type === 'info') div.className += ' text-blue-400';
+    else if (type === 'warning') div.className += ' text-amber-400';
+    
+    div.textContent = msg; // Text content safe
+    out.appendChild(div);
+    out.scrollTop = out.scrollHeight;
+}
+
+function clearTerminal() {
+    document.getElementById('log-output').innerHTML = '<div class="text-slate-700 italic">Waiting for execution...</div>';
+}
+
+/* ══ Core Logic ══ */
+
 function loadCodeInEditor(code) {
     if (editor) {
         editor.setValue(code);
-        showToast('Code loaded in editor', 'info');
+        showToast('Code loaded to editor', 'info');
     }
 }
 
-function getEditorCode() {
-    return editor ? editor.getValue() : '';
-}
+function getEditorCode() { return editor ? editor.getValue() : ''; }
 
-// ══ Chat / Code Generation ═══════════════════════════════════════════
-
+/* Chat */
 async function handleSubmit(e) {
     e.preventDefault();
     var input = document.getElementById('prompt-input');
@@ -426,8 +562,9 @@ async function handleSubmit(e) {
 
     appendMessage('user', prompt);
     input.value = '';
+    input.style.height = 'auto'; // Reset height
 
-    var typingId = showTypingIndicator();
+    var typingId = showTypingIndicator(); // Function below
     var btn = document.getElementById('send-btn');
     btn.disabled = true;
 
@@ -437,7 +574,7 @@ async function handleSubmit(e) {
         params.append('session_id', activeSessionId);
 
         var resp = await fetch('/api/generate', { method: 'POST', body: params });
-        if (!resp.ok) throw new Error('Server returned ' + resp.status);
+        if (!resp.ok) throw new Error('Status ' + resp.status);
         var data = await resp.json();
 
         removeTypingIndicator(typingId);
@@ -465,26 +602,25 @@ function appendMessage(role, content) {
     var div = document.createElement('div');
 
     if (role === 'user') {
-        div.className = 'flex justify-end';
-        div.innerHTML = '<div class="chat-msg-user px-4 py-3 max-w-[70%] text-sm whitespace-pre-wrap">' + escapeHtml(content) + '</div>';
+        div.className = 'flex justify-end animate-slide-in';
+        div.innerHTML = `<div class="chat-msg-user px-5 py-3.5 max-w-[70%] text-sm text-white font-medium shadow-lg leading-relaxed whitespace-pre-wrap">${escapeHtml(content)}</div>`;
     } else if (role === 'assistant') {
-        div.className = 'flex justify-start';
-        var escaped = escapeHtml(content);
-        div.innerHTML = '<div class="chat-msg-bot px-4 py-3 max-w-[80%] text-sm">'
-            + '<pre class="overflow-x-auto"><code class="language-python">' + escaped + '</code></pre>'
-            + '<button onclick="loadCodeInEditor(this.closest(\'.chat-msg-bot\').querySelector(\'code\').textContent)"'
-            + ' class="mt-2 text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1">'
-            + 'Load in editor <svg class="icon w-3 h-3"><use href="#i-arrow-right"/></svg></button>'
-            + '</div>';
-        setTimeout(function() {
-            var codeEl = div.querySelector('code');
-            if (codeEl && window.hljs) hljs.highlightElement(codeEl);
-        }, 10);
+        div.className = 'flex justify-start animate-slide-in';
+        div.innerHTML = `
+            <div class="chat-msg-bot px-5 py-4 max-w-[85%] text-sm shadow-xl">
+                <pre class="overflow-x-auto custom-scrollbar"><code class="language-python rounded-lg">${escapeHtml(content)}</code></pre>
+                <div class="mt-3 pt-3 border-t border-white/5 flex justify-end">
+                    <button onclick="loadCodeInEditor(this.closest('.chat-msg-bot').querySelector('code').textContent)"
+                            class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1.5 transition-colors">
+                        Load in Editor <svg class="icon w-3.5 h-3.5"><use href="#i-arrow-right"/></svg>
+                    </button>
+                </div>
+            </div>`;
+        setTimeout(() => { if (window.hljs) hljs.highlightElement(div.querySelector('code')); }, 10);
     } else if (role === 'error') {
-        div.className = 'flex justify-start';
-        div.innerHTML = '<div class="px-4 py-3 bg-red-900/30 border border-red-700 rounded-xl max-w-[80%] text-sm text-red-300">' + escapeHtml(content) + '</div>';
+        div.className = 'flex justify-start animate-slide-in';
+        div.innerHTML = `<div class="px-4 py-3 bg-red-500/10 border border-red-500/20 text-red-300 rounded-xl text-sm">${escapeHtml(content)}</div>`;
     }
-
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
 }
@@ -494,34 +630,31 @@ function showTypingIndicator() {
     var id = 'typing-' + Date.now();
     var div = document.createElement('div');
     div.id = id;
-    div.className = 'flex justify-start';
-    div.innerHTML = '<div class="chat-msg-bot px-4 py-3 flex gap-1">'
-        + '<div class="typing-dot w-2 h-2 bg-gray-400 rounded-full"></div>'
-        + '<div class="typing-dot w-2 h-2 bg-gray-400 rounded-full"></div>'
-        + '<div class="typing-dot w-2 h-2 bg-gray-400 rounded-full"></div>'
-        + '</div>';
+    div.className = 'flex justify-start animate-slide-in';
+    div.innerHTML = `
+        <div class="chat-msg-bot px-4 py-3 flex gap-1.5 items-center">
+            <div class="typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
+            <div class="typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
+            <div class="typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
+        </div>`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
     return id;
 }
+function removeTypingIndicator(id) { var el = document.getElementById(id); if (el) el.remove(); }
 
-function removeTypingIndicator(id) {
-    var el = document.getElementById(id);
-    if (el) el.remove();
-}
-
-// ══ Code Execution ═══════════════════════════════════════════════════
-
+/* Execution */
 async function runCode() {
     var code = getEditorCode();
     if (!code.trim()) { showToast('Editor is empty', 'warning'); return; }
 
     isExecuting = true;
-    document.getElementById('btn-run').disabled = true;
+    document.getElementById('btn-run').classList.add('hidden');
+    document.getElementById('btn-stop').classList.remove('hidden');
     document.getElementById('btn-stop').disabled = false;
     document.getElementById('stdin-bar').classList.remove('hidden');
     clearTerminal();
-    appendLog('info', 'Starting execution...');
+    appendLog('info', 'Compiling & starting execution...');
 
     try {
         var resp = await fetch('/api/execute', {
@@ -529,31 +662,25 @@ async function runCode() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code }),
         });
-        if (!resp.ok) {
-            var text = await resp.text();
-            throw new Error('Server returned ' + resp.status + ': ' + text);
-        }
+        if (!resp.ok) throw new Error(await resp.text());
     } catch (err) {
-        appendLog('stderr', 'Failed to start execution: ' + err.message);
+        appendLog('stderr', 'Failed to start: ' + err.message);
         executionFinished();
     }
 }
 
 async function stopCode() {
     try {
-        var resp = await fetch('/api/execute/kill', { method: 'POST' });
-        if (resp.ok) showToast('Kill signal sent', 'info');
-    } catch (err) {
-        showToast('Failed to stop: ' + err.message, 'error');
-    }
+        await fetch('/api/execute/kill', { method: 'POST' });
+        showToast('Kill signal sent', 'info');
+    } catch (err) { showToast('Error stopping: ' + err.message, 'error'); }
 }
 
 function executionFinished() {
     isExecuting = false;
-    document.getElementById('btn-run').disabled = false;
-    document.getElementById('btn-stop').disabled = true;
+    document.getElementById('btn-run').classList.remove('hidden');
+    document.getElementById('btn-stop').classList.add('hidden');
     document.getElementById('stdin-bar').classList.add('hidden');
-    document.getElementById('stdin-input').value = '';
 }
 
 async function sendStdinInput() {
@@ -561,263 +688,101 @@ async function sendStdinInput() {
     var text = input.value;
     input.value = '';
     input.focus();
-
-    if (!isExecuting) {
-        showToast('No running process', 'warning');
-        return;
-    }
+    if (!isExecuting) { showToast('Not running', 'warning'); return; }
 
     try {
-        var resp = await fetch('/api/execute/input', {
+        await fetch('/api/execute/input', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ input: text }),
         });
-        var data = await resp.json();
-        if (data.status === 'no_process') {
-            showToast('Process has ended', 'warning');
-        } else if (data.status === 'error') {
-            appendLog('stderr', 'Input error: ' + data.message);
-        }
-    } catch (err) {
-        appendLog('stderr', 'Failed to send input: ' + err.message);
-    }
+    } catch (err) { appendLog('stderr', 'Input Error: ' + err.message); }
 }
 
-// ══ Lint & Security ══════════════════════════════════════════════════
-
+/* Lint & Security */
 async function lintCode() {
     var code = getEditorCode();
-    if (!code.trim()) { showToast('Editor is empty', 'warning'); return; }
-
-    appendLog('info', 'Running lint check...');
+    if (!code.trim()) return showToast('No code', 'warning');
+    appendLog('info', 'Running Ruff lint check...');
     try {
-        var resp = await fetch('/api/lint', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: code }),
-        });
+        var resp = await fetch('/api/lint', { method: 'POST', body: JSON.stringify({code}), headers: {'Content-Type':'application/json'} });
         var data = await resp.json();
-
-        if (data.passed) {
-            appendLog('success', 'Lint check passed');
-            showToast('Lint passed', 'success');
-        } else {
-            appendLog('stderr', 'Lint: ' + data.summary);
-            (data.diagnostics || []).forEach(function(d) {
-                appendLog(d.severity === 'error' ? 'stderr' : 'warning', d.message);
-            });
+        if (data.passed) { appendLog('success', '✓ Lint Check Passed'); showToast('Lint Passed', 'success'); }
+        else {
+            appendLog('warning', '⚠ Lint Issues Found:');
+            (data.diagnostics||[]).forEach(d => appendLog(d.severity==='error'?'stderr':'warning', `[${d.code}] ${d.message}`));
         }
-    } catch (err) {
-        appendLog('stderr', 'Lint error: ' + err.message);
-    }
+    } catch (e) { appendLog('stderr', 'Lint Failed: ' + e.message); }
 }
 
 async function securityScan() {
     var code = getEditorCode();
-    if (!code.trim()) { showToast('Editor is empty', 'warning'); return; }
-
-    appendLog('info', 'Running security scan...');
+    if (!code.trim()) return showToast('No code', 'warning');
+    appendLog('info', 'Running Bandit security scan...');
     try {
-        var resp = await fetch('/api/security', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: code }),
-        });
+        var resp = await fetch('/api/security', { method: 'POST', body: JSON.stringify({code}), headers: {'Content-Type':'application/json'} });
         var data = await resp.json();
-
-        if (data.passed) {
-            appendLog('success', 'Security scan passed');
-            showToast('Security passed', 'success');
-        } else {
-            appendLog(data.has_high_severity ? 'stderr' : 'warning', 'Security: ' + data.summary);
-            (data.diagnostics || []).forEach(function(d) {
-                appendLog(d.severity === 'HIGH' ? 'stderr' : 'warning', '[' + d.severity + '] ' + d.message);
-            });
+        if (data.passed) { appendLog('success', '✓ Security Scan Passed'); showToast('Security Passed', 'success'); }
+        else {
+            appendLog('stderr', '⚠ Security Issues Found:');
+            (data.diagnostics||[]).forEach(d => appendLog(d.severity==='HIGH'?'stderr':'warning', `[${d.severity}] ${d.message}`));
         }
-    } catch (err) {
-        appendLog('stderr', 'Security error: ' + err.message);
-    }
+    } catch (e) { appendLog('stderr', 'Scan Failed: ' + e.message); }
 }
 
-// ══ Copy & Download ══════════════════════════════════════════════════
-
+/* Copy/Download */
 async function copyCode() {
     var code = getEditorCode();
-    if (!code.trim()) { showToast('Nothing to copy', 'warning'); return; }
-    try {
-        await navigator.clipboard.writeText(code);
-        showToast('Copied to clipboard', 'success');
-    } catch (e) {
-        // Fallback for non-HTTPS / older browsers
-        var ta = document.createElement('textarea');
-        ta.value = code;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast('Copied to clipboard', 'success');
-    }
+    if (!code.trim()) return showToast('Nothing to copy', 'warning');
+    await navigator.clipboard.writeText(code);
+    showToast('Copied to clipboard', 'success');
 }
-
 function downloadCode() {
     var code = getEditorCode();
-    if (!code.trim()) { showToast('Nothing to download', 'warning'); return; }
-    var blob = new Blob([code], { type: 'text/x-python' });
-    var url = URL.createObjectURL(blob);
+    if (!code.trim()) return showToast('Nothing to download', 'warning');
+    var blob = new Blob([code], {type:'text/x-python'});
     var a = document.createElement('a');
-    a.href = url;
-    var ts = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
-    a.download = 'script_' + ts + '.py';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('Downloaded', 'success');
+    a.href = URL.createObjectURL(blob);
+    a.download = `script_${new Date().toISOString().replace(/[:.]/g,'').slice(0,15)}.py`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
-// ══ Session Management ═══════════════════════════════════════════════
-
+/* Sessions */
 async function createSession() {
-    try {
-        var resp = await fetch('/api/sessions', { method: 'POST' });
-        var data = await resp.json();
-        activeSessionId = data.id;
-        document.getElementById('chat-messages').innerHTML =
-            '<div id="chat-placeholder" class="flex items-center justify-center h-full text-gray-600">'
-            + '<div class="text-center">'
-            + '<svg class="icon w-12 h-12 mx-auto mb-3 text-gray-700"><use href="#i-message"/></svg>'
-            + '<p class="text-lg">Start a conversation</p>'
-            + '<p class="text-sm mt-1 text-gray-700">Describe the Python code you want to generate</p>'
-            + '</div></div>';
-        if (editor) editor.setValue('');
-        refreshSessionList();
-        showToast('New chat created', 'info');
-    } catch (err) {
-        showToast('Failed to create session: ' + err.message, 'error');
-    }
+    await fetch('/api/sessions', {method:'POST'});
+    setTimeout(() => { refreshSessionList(); window.location.reload(); }, 100); 
 }
-
 async function switchSession(id) {
-    try {
-        activeSessionId = id;
-        var resp = await fetch('/api/sessions/' + id);
-        var data = await resp.json();
-
-        await fetch('/api/sessions/' + id + '/active', { method: 'PUT' });
-
-        var chat = document.getElementById('chat-messages');
-        chat.innerHTML = '';
-
-        if (!data.messages || data.messages.length === 0) {
-            chat.innerHTML =
-                '<div id="chat-placeholder" class="flex items-center justify-center h-full text-gray-600">'
-                + '<div class="text-center">'
-                + '<svg class="icon w-12 h-12 mx-auto mb-3 text-gray-700"><use href="#i-message"/></svg>'
-                + '<p class="text-lg">Start a conversation</p>'
-                + '<p class="text-sm mt-1 text-gray-700">Describe the Python code you want to generate</p>'
-                + '</div></div>';
-        } else {
-            data.messages.forEach(function(m) {
-                appendMessage(m.role === 'assistant' ? 'assistant' : 'user', m.content);
-            });
-        }
-
-        if (data.last_generated_code && editor) {
-            editor.setValue(data.last_generated_code);
-        }
-
-        refreshSessionList();
-    } catch (err) {
-        showToast('Failed to switch session: ' + err.message, 'error');
-    }
+    activeSessionId = id;
+    await fetch('/api/sessions/'+id+'/active', {method:'PUT'});
+    window.location.reload();
 }
-
 async function deleteSession(id) {
-    try {
-        var resp = await fetch('/api/sessions/' + id, { method: 'DELETE' });
-        var data = await resp.json();
-        if (data.status === 'deleted') {
-            if (id === activeSessionId) {
-                var listResp = await fetch('/api/sessions');
-                var sessions = await listResp.json();
-                if (sessions.length > 0) {
-                    await switchSession(sessions[0].id);
-                }
-            }
-            refreshSessionList();
-            showToast('Session deleted', 'info');
-        } else {
-            showToast(data.message || 'Cannot delete', 'error');
-        }
-    } catch (err) {
-        showToast('Failed to delete: ' + err.message, 'error');
-    }
+    if(!confirm('Delete this session?')) return;
+    await fetch('/api/sessions/'+id, {method:'DELETE'});
+    if(id === activeSessionId) window.location.reload();
+    else refreshSessionList();
 }
-
 async function refreshSessionList() {
-    try {
-        var resp = await fetch('/api/sessions');
-        var sessions = await resp.json();
-        var container = document.getElementById('session-list');
-        container.innerHTML = sessions.map(function(s) {
-            return '<div class="group flex items-center rounded hover:bg-gray-800 '
-                + (s.id === activeSessionId ? 'bg-gray-800' : '') + '"'
-                + ' data-session-id="' + s.id + '">'
-                + '<button class="flex-1 text-left px-3 py-2 text-sm truncate '
-                + (s.id === activeSessionId ? 'text-cyan-400' : 'text-gray-300') + '"'
-                + ' onclick="switchSession(\'' + s.id + '\')">'
-                + escapeHtml(s.name)
-                + '</button>'
-                + '<button class="hidden group-hover:block px-2 text-gray-600 hover:text-red-400"'
-                + ' onclick="deleteSession(\'' + s.id + '\')" title="Delete">'
-                + '<svg class="icon w-3.5 h-3.5"><use href="#i-trash"/></svg>'
-                + '</button></div>';
-        }).join('');
-    } catch (err) {
-        // Silently fail — sidebar will be stale but functional
-    }
+    var resp = await fetch('/api/sessions');
+    var sessions = await resp.json();
+    var list = document.getElementById('session-list');
+    list.innerHTML = sessions.map(s => `
+        <div class="group flex items-center rounded-lg ${s.id===activeSessionId ? 'bg-slate-800/80 text-white' : 'text-slate-400 hover:bg-slate-800/40 hover:text-slate-300'} transition-colors" data-session-id="${s.id}">
+            <button class="flex-1 text-left px-3 py-2 text-xs truncate" onclick="switchSession('${s.id}')">${escapeHtml(s.name)}</button>
+            <button class="opacity-0 group-hover:opacity-100 px-2 text-slate-500 hover:text-red-400 transition-opacity" onclick="deleteSession('${s.id}')">
+                <svg class="icon w-3.5 h-3.5"><use href="#i-trash"/></svg>
+            </button>
+        </div>
+    `).join('');
 }
 
-// ══ Settings ═════════════════════════════════════════════════════════
-
-async function openSettings() {
-    try {
-        var resp = await fetch('/api/settings');
-        var s = await resp.json();
-
-        document.getElementById('s-provider').value = s.provider;
-        document.getElementById('s-api-url').value = s.api_url || '';
-        document.getElementById('s-temperature').value = s.temperature;
-        document.getElementById('s-temp-val').textContent = s.temperature;
-        document.getElementById('s-max-tokens').value = s.max_tokens;
-        document.getElementById('s-timeout').value = s.execution_timeout_secs;
-        document.getElementById('s-docker').checked = !!s.use_docker;
-        document.getElementById('s-venv').checked = !!s.use_venv;
-        document.getElementById('s-linting').checked = !!s.use_linting;
-        document.getElementById('s-security').checked = !!s.use_security_check;
-        document.getElementById('s-auto-deps').checked = !!s.auto_install_deps;
-
-        // Always fetch fresh models when opening settings
-        modelsData = null;
-        await loadModelsForProvider(s.provider, s.model);
-
-        document.getElementById('settings-modal').classList.remove('hidden');
-    } catch (err) {
-        showToast('Failed to load settings: ' + err.message, 'error');
-    }
-}
-
-function closeSettings() {
-    document.getElementById('settings-modal').classList.add('hidden');
-}
-
+/* Settings Modal */
+function openSettings() { document.getElementById('settings-modal').classList.remove('hidden'); }
+function closeSettings() { document.getElementById('settings-modal').classList.add('hidden'); }
 async function saveSettings() {
-    var settings = {
+    var s = {
         provider: document.getElementById('s-provider').value,
-        model: document.getElementById('s-model').value,
         api_url: document.getElementById('s-api-url').value,
         temperature: parseFloat(document.getElementById('s-temperature').value),
         max_tokens: parseInt(document.getElementById('s-max-tokens').value),
@@ -826,229 +791,62 @@ async function saveSettings() {
         use_venv: document.getElementById('s-venv').checked,
         use_linting: document.getElementById('s-linting').checked,
         use_security_check: document.getElementById('s-security').checked,
-        auto_install_deps: document.getElementById('s-auto-deps').checked,
+        auto_install_deps: document.getElementById('s-auto-deps').checked
     };
-
     try {
-        var resp = await fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(settings),
-        });
-        if (!resp.ok) throw new Error('Server returned ' + resp.status);
-
-        document.getElementById('header-provider').textContent = settings.provider;
-        document.getElementById('header-model').textContent = settings.model;
-
-        closeSettings();
+        await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s) });
         showToast('Settings saved', 'success');
-    } catch (err) {
-        showToast('Failed to save settings: ' + err.message, 'error');
-    }
+        closeSettings();
+        setTimeout(() => window.location.reload(), 500);
+    } catch(e) { showToast('Save failed', 'error'); }
+}
+async function loadSettings() {
+    var resp = await fetch('/api/settings');
+    var s = await resp.json();
+    document.getElementById('s-provider').value = s.provider;
+    document.getElementById('s-api-url').value = s.api_url || '';
+    document.getElementById('s-temperature').value = s.temperature;
+    document.getElementById('s-temp-val').innerText = s.temperature;
+    document.getElementById('s-max-tokens').value = s.max_tokens;
+    document.getElementById('s-timeout').value = s.execution_timeout_secs;
+    document.getElementById('s-docker').checked = s.use_docker;
+    document.getElementById('s-venv').checked = s.use_venv;
+    document.getElementById('s-linting').checked = s.use_linting;
+    document.getElementById('s-security').checked = s.use_security_check;
+    document.getElementById('s-auto-deps').checked = s.auto_install_deps;
 }
 
-async function refreshModels() {
-    var selectedModel = document.getElementById('s-model').value;
-    modelsData = null;
-    var provider = document.getElementById('s-provider').value;
-    await loadModelsForProvider(provider, selectedModel);
-    showToast('Models refreshed', 'info');
-}
-
-var allModelsForProvider = [];
-
-async function loadModelsForProvider(provider, currentModel) {
+/* WebSocket */
+var wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+var ws = new WebSocket(wsProtocol + '//' + window.location.host + '/api/logs');
+ws.onmessage = function(event) {
     try {
-        if (!modelsData) {
-            var resp = await fetch('/api/models');
-            modelsData = await resp.json();
-        }
-
-        var providerData = modelsData.providers.find(function(p) { return p.id === provider; });
-        allModelsForProvider = providerData ? providerData.models : [];
-
-        var selected = currentModel || (allModelsForProvider.length > 0 ? allModelsForProvider[0] : '');
-        document.getElementById('s-model').value = selected;
-        document.getElementById('s-model-search').value = selected;
-        document.getElementById('s-model-count').textContent = '(' + allModelsForProvider.length + ' available)';
-
-        renderModelList(allModelsForProvider, selected);
-    } catch (err) {
-        // Silently fail
-    }
-}
-
-function renderModelList(models, selected) {
-    var list = document.getElementById('s-model-list');
-    list.innerHTML = models.map(function(m) {
-        var isSelected = m === selected;
-        return '<div class="px-3 py-1.5 text-sm cursor-pointer hover:bg-gray-700 '
-            + (isSelected ? 'text-cyan-400 bg-gray-700/50' : 'text-gray-300') + '"'
-            + ' onmousedown="selectModel(\'' + m.replace(/'/g, "\\'") + '\')">' + escapeHtml(m) + '</div>';
-    }).join('');
-}
-
-function selectModel(m) {
-    document.getElementById('s-model').value = m;
-    document.getElementById('s-model-search').value = m;
-    document.getElementById('s-model-list').classList.add('hidden');
-    renderModelList(allModelsForProvider, m);
-}
-
-function showModelDropdown() {
-    document.getElementById('s-model-search').value = '';
-    filterModels();
-    document.getElementById('s-model-list').classList.remove('hidden');
-}
-
-function filterModels() {
-    var q = document.getElementById('s-model-search').value.toLowerCase();
-    var filtered = allModelsForProvider.filter(function(m) { return m.toLowerCase().indexOf(q) !== -1; });
-    renderModelList(filtered, document.getElementById('s-model').value);
-    document.getElementById('s-model-list').classList.remove('hidden');
-}
-
-// Close model dropdown when clicking outside
-document.addEventListener('click', function(e) {
-    var wrapper = document.getElementById('model-dropdown-wrapper');
-    if (wrapper && !wrapper.contains(e.target)) {
-        document.getElementById('s-model-list').classList.add('hidden');
-        // Restore display of selected model
-        var cur = document.getElementById('s-model').value;
-        if (cur) document.getElementById('s-model-search').value = cur;
-    }
-});
-
-// Update model list when provider changes
-document.getElementById('s-provider').addEventListener('change', function(e) {
-    loadModelsForProvider(e.target.value);
-    var urls = {
-        'huggingface': 'https://router.huggingface.co/v1/chat/completions',
-        'ollama': 'http://localhost:11434/v1/chat/completions',
-        'openai-compatible': '',
-    };
-    document.getElementById('s-api-url').value = urls[e.target.value] || '';
-});
-
-// ══ WebSocket for Real-time Logs ═════════════════════════════════════
-
-var ws;
-function connectWS() {
-    var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(protocol + '//' + window.location.host + '/api/logs');
-
-    ws.onopen = function() {
-        appendLog('info', 'Connected to server');
-    };
-
-    ws.onmessage = function(event) {
-        var data;
-        try { data = JSON.parse(event.data); } catch (e) { return; }
-
-        if (data.type === 'LogLine') {
-            appendLog(data.stream, '[' + data.timestamp + '] ' + data.content);
-        } else if (data.type === 'ExecutionStarted') {
-            appendLog('info', 'Executing ' + data.script_path);
-        } else if (data.type === 'ExecutionCompleted') {
-            appendLog(
-                data.success ? 'success' : 'stderr',
-                (data.success ? 'SUCCESS' : 'FAILED') + ' (exit ' + (data.exit_code != null ? data.exit_code : 'N/A') + ')'
-            );
+        var msg = JSON.parse(event.data);
+        if (msg.type === 'stdout') appendLog('stdout', msg.data);
+        else if (msg.type === 'stderr') appendLog('stderr', msg.data);
+        else if (msg.type === 'execution_started') {
+            document.getElementById('log-output').innerHTML = '';
+            appendLog('info', '--- Execution Started ---');
+            isExecuting = true;
+            document.getElementById('btn-run').classList.add('hidden');
+            document.getElementById('btn-stop').classList.remove('hidden');
+        } else if (msg.type === 'execution_finished') {
+            appendLog('info', `--- Finished (Exit Code: ${msg.exit_code}) ---`);
             executionFinished();
-        } else if (data.type === 'CodeGenerated') {
-            appendLog('info', 'New code generated');
-            htmx.trigger(document.getElementById('history-list'), 'historyRefresh');
-        } else if (data.type === 'ExecutionKilled') {
-            appendLog('stderr', 'Script killed by user');
-            executionFinished();
-        } else if (data.type === 'WaitingForInput') {
-            appendLog('stdin', data.prompt || 'Waiting for input...');
-            document.getElementById('stdin-input').focus();
+            if(msg.exit_code === 0) showToast('Execution finished', 'success');
+            else showToast('Execution failed', 'error');
+            htmx.trigger(document.getElementById('stats-panel'), 'load'); 
+        } else if (msg.type === 'code_generated') {
+             appendMessage('assistant', msg.code);
+             loadCodeInEditor(msg.code);
+             htmx.trigger(document.getElementById('history-list'), 'historyRefresh');
         }
-    };
+    } catch(e) {}
+};
 
-    ws.onclose = function() { setTimeout(connectWS, 3000); };
-    ws.onerror = function() { ws.close(); };
-}
-connectWS();
-
-// ══ Terminal Helpers ═════════════════════════════════════════════════
-
-function appendLog(stream, text) {
-    var logDiv = document.getElementById('log-output');
-    var placeholder = logDiv.querySelector('.italic');
-    if (placeholder) logDiv.innerHTML = '';
-
-    var line = document.createElement('div');
-    var colors = {
-        stdout: 'text-green-300',
-        stderr: 'text-red-400',
-        info: 'text-cyan-400',
-        warning: 'text-yellow-400',
-        success: 'text-green-400 font-semibold',
-        stdin: 'text-yellow-300 italic',
-    };
-    line.className = colors[stream] || 'text-gray-300';
-    line.textContent = stream === 'stdin' ? '> ' + text : text;
-    logDiv.appendChild(line);
-    logDiv.scrollTop = logDiv.scrollHeight;
-}
-
-function clearTerminal() {
-    document.getElementById('log-output').innerHTML = '';
-}
-
-// ══ Script History delegation ════════════════════════════════════════
-document.getElementById('history-list').addEventListener('click', function(e) {
-    var btn = e.target.closest('button[data-script]');
-    if (btn) {
-        fetch('/code/' + encodeURIComponent(btn.dataset.script))
-            .then(function(r) { return r.text(); })
-            .then(function(html) {
-                var tmp = document.createElement('div');
-                tmp.innerHTML = html;
-                var codeEl = tmp.querySelector('code');
-                if (codeEl && editor) {
-                    editor.setValue(codeEl.textContent);
-                    showToast('Loaded ' + btn.dataset.script, 'info');
-                }
-            })
-            .catch(function() {
-                showToast('Failed to load script', 'error');
-            });
-    }
-});
-
-// ══ Utility ══════════════════════════════════════════════════════════
-
-function escapeHtml(s) {
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-
-function showToast(message, type) {
-    var container = document.getElementById('toast-container');
-    var colors = {
-        success: 'bg-green-800 text-green-200 border-green-600',
-        error: 'bg-red-800 text-red-200 border-red-600',
-        warning: 'bg-yellow-800 text-yellow-200 border-yellow-600',
-        info: 'bg-cyan-800 text-cyan-200 border-cyan-600',
-    };
-    var toast = document.createElement('div');
-    toast.className = 'toast px-4 py-2 rounded-lg border text-sm shadow-lg ' + (colors[type] || colors.info);
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(function() { toast.remove(); }, 3000);
-}
-
-// Keyboard shortcut: Ctrl/Cmd+Shift+Enter to run
-document.addEventListener('keydown', function(e) {
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
-        e.preventDefault();
-        runCode();
-    }
-});
+// Init
+document.getElementById('s-temperature').addEventListener('input', e => document.getElementById('s-temp-val').innerText = e.target.value);
+loadSettings();
 </script>
 </body>
 </html>

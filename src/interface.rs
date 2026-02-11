@@ -71,11 +71,23 @@ impl Completer for CommandCompleter {
 
 // Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue
 pub fn print_banner() {
-    println!("{}", "====================================".bright_cyan());
-    println!("{}", "      PYTHON MAKER BOT v0.3.0       ".bright_cyan().bold());
-    println!("{}", "====================================".bright_cyan());
-    println!("{}", " AI-Powered Python Code Generator".bright_white());
-    println!("{}\n", " Type /help for commands or /quit to exit".dimmed());
+    // Clear screen first
+    print!("\x1B[2J\x1B[1;1H");
+    
+    let art = r#"
+   ██████╗ ██╗   ██╗████████╗██╗  ██╗ ██████╗ ███╗   ██╗
+   ██╔══██╗╚██╗ ██╔╝╚══██╔══╝██║  ██║██╔═══██╗████╗  ██║
+   ██████╔╝ ╚████╔╝    ██║   ███████║██║   ██║██╔██╗ ██║
+   ██╔═══╝   ╚██╔╝     ██║   ██╔══██║██║   ██║██║╚██╗██║
+   ██║        ██║      ██║   ██║  ██║╚██████╔╝██║ ╚████║
+   ╚═╝        ╚═╝      ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+    "#;
+    println!("{}", art.bright_cyan().bold());
+    println!("    {}", "MAKER BOT v0.3.0 — AI Code Generator".bright_white());
+    println!();
+    println!("    {} Type {} for command list", "ℹ".cyan(), "/help".bold().white());
+    println!("    {} Type {} to quit", "ℹ".cyan(), "/quit".bold().white());
+    println!();
 }
 
 // Utility function to ask the user a question and return their answer
@@ -95,22 +107,32 @@ pub fn confirm(question: &str) -> bool {
 }
 
 // Display function for generated Python code
+// Display function for generated Python code
 pub fn display_code(code: &str) {
-    println!("\n{}", "━━━━━━━━━━━ Generated Code ━━━━━━━━━━━".bright_green().bold());
+    let border = "────────────────────────────────────────────────────────".bright_black();
+    println!("\n{}", border);
+    println!("  {}", "Generated Python Code".bright_cyan().bold());
+    println!("{}", border);
+    
     // Simple syntax highlighting for Python
-    for line in code.lines() {
+    for (i, line) in code.lines().enumerate() {
+        let line_num = format!("{:3} │", i + 1).bright_black();
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') {
-            println!("{}", line.bright_black());
+        let highlighted = if trimmed.starts_with('#') {
+            line.bright_green() // Comments green
         } else if trimmed.starts_with("def ") || trimmed.starts_with("class ") {
-            println!("{}", line.bright_yellow());
+            line.bright_yellow()
         } else if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
-            println!("{}", line.bright_magenta());
+            line.bright_magenta()
+        } else if trimmed.contains("print(") {
+            line.cyan()
         } else {
-            println!("{}", line);
-        }
+            line.white()
+        };
+        println!("{} {}", line_num, highlighted);
     }
-    println!("{}\n", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_green());
+    println!("{}", border);
+    println!();
 }
 
 /// Trim conversation history to at most `max` messages, dropping the oldest
@@ -181,25 +203,26 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
         }
     };
     match provider.resolve_api_url(&config.api_url) {
-        Ok(url) => println!("{} {} → {}", "✓ Provider:".green(), provider.display_name().bright_white(), url.dimmed()),
+        Ok(url) => println!("{} {} → {}", "✔ Provider:".green(), provider.display_name().bright_white(), url.dimmed()),
         Err(e) => {
-            println!("{} {}", "✗ Provider configuration error:".red().bold(), e);
+            println!("{} {}", "✖ Provider configuration error:".red().bold(), e);
             return None;
         }
     }
 
     if config.use_venv {
-        println!("{}", "✓ Virtual environment isolation enabled.".green());
+        println!("{} {}", "✔".green(), "Virtual environment isolation enabled.".white());
     }
 
     // Check linter availability
+    // Check linter availability
     let linter_available = if config.use_linting {
         if CodeExecutor::check_linter_available() {
-            println!("{}", "✓ Linting enabled (ruff detected).".green());
+            println!("{} {}", "✔".green(), "Linting enabled (ruff).".white());
             true
         } else {
-            println!("{}", "⚠️  Linting enabled but ruff not found. Install with: pip install ruff".yellow());
-            println!("{}", "  Linting will be skipped until ruff is installed.".dimmed());
+            println!("{} {}", "⚠".yellow(), "Linting enabled but ruff not found. Install with: pip install ruff");
+            println!("  {} Linting will be skipped.", "ℹ".blue());
             false
         }
     } else {
@@ -209,11 +232,11 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
     // Check security scanner (bandit) availability
     let security_scanner_available = if config.use_security_check {
         if CodeExecutor::check_security_scanner_available() {
-            println!("{}", "✓ Security scanning enabled (bandit detected).".green());
+            println!("{} {}", "✔".green(), "Security scanning enabled (bandit).".white());
             true
         } else {
-            println!("{}", "⚠️  Security scanning enabled but bandit not found. Install with: pip install bandit".yellow());
-            println!("{}", "  Security scanning will be skipped until bandit is installed.".dimmed());
+            println!("{} {}", "⚠".yellow(), "Security scanning enabled but bandit not found. Install with: pip install bandit");
+            println!("  {} Security scanning will be skipped.", "ℹ".blue());
             false
         }
     } else {
@@ -222,19 +245,19 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
 
     // If Docker mode is enabled, verify Docker is available; fall back to host execution if not
     let use_docker = if config.use_docker {
-        print!("{}", "⏳ Checking Docker availability...".dimmed());
+        print!("{} Checking Docker availability...", "⟳".dimmed());
         std::io::Write::flush(&mut std::io::stdout()).ok();
         match CodeExecutor::check_docker_available() {
             Ok(()) => {
                 print!("\r\x1b[2K");
-                println!("{}", "✓ Docker sandbox mode enabled.".green());
+                println!("{} {}", "✔".green(), "Docker sandbox mode enabled.".white());
                 true
             }
             Err(e) => {
                 print!("\r\x1b[2K");
-                println!("{} {}", "✗ Docker sandbox not available:".red().bold(), e);
-                println!("{}", "  Falling back to host execution.".yellow());
-                println!("{}", "  To enable Docker, run: docker build -t python-sandbox .".dimmed());
+                println!("{} {}", "✖ Docker sandbox not available:".red().bold(), e);
+                println!("  {} Falling back to host execution.", "⚠".yellow());
+                println!("  {} To enable Docker, run: docker build -t python-sandbox .", "ℹ".blue());
                 false
             }
         }
@@ -331,7 +354,9 @@ async fn start_repl_loop(
     let mut last_synced_metrics = SessionMetrics::new();
 
     loop {
-        let readline = rl.readline(&"> ".bright_cyan().bold().to_string());
+        // Two-line prompt for better visibility
+        let prompt = format!("\n{} {}\n{} ", "╭──".bright_black(), "🤖".yellow(), "╰── ➤".bright_magenta());
+        let readline = rl.readline(&prompt);
         let prompt = match readline {
             Ok(line) => line.trim().to_string(),
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
@@ -354,20 +379,21 @@ async fn start_repl_loop(
         }
 
         if prompt == "/help" {
-            println!("\n{}", "Available Commands:".bright_cyan().bold());
-            println!("  {}  - Exit the program", "/quit, /exit".green());
-            println!("  {}         - Show this help", "/help".green());
-            println!("  {}        - Clear conversation history", "/clear".green());
-            println!("  {}       - Refine the last generated code", "/refine".green());
-            println!("  {} <file> - Save last code to a file", "/save".green());
-            println!("  {}      - Show conversation history", "/history".green());
-            println!("  {}        - Show session statistics", "/stats".green());
-            println!("  {}         - List all generated scripts", "/list".green());
-            println!("  {} <file>  - Execute a previously generated script", "/run".green());
-            println!("  {}     - Show current LLM provider info", "/provider".green());
-            println!("  {}         - Lint the last generated code with ruff", "/lint".green());
-            println!("  {}     - Run security scan (bandit) on last code", "/security".green());
-            println!("  {}    - Show dashboard URL (if enabled)", "/dashboard".green());
+            println!("\n{}", "  ╭── Available Commands ──────────────────────".bright_black());
+            println!("  {} {}    {}", "│".bright_black(), "/quit, /exit".green().bold(), "Exit the program");
+            println!("  {} {}         {}", "│".bright_black(), "/help".green().bold(), "Show this help output");
+            println!("  {} {}        {}", "│".bright_black(), "/clear".green().bold(), "Clear conversation history");
+            println!("  {} {}       {}", "│".bright_black(), "/refine".green().bold(), "Refine the last generated code");
+            println!("  {} {} <file> {}", "│".bright_black(), "/save".green().bold(), "Save last code to a file");
+            println!("  {} {}      {}", "│".bright_black(), "/history".green().bold(), "Show conversation history");
+            println!("  {} {}        {}", "│".bright_black(), "/stats".green().bold(), "Show session statistics");
+            println!("  {} {}         {}", "│".bright_black(), "/list".green().bold(), "List all previously generated scripts");
+            println!("  {} {} <file>  {}", "│".bright_black(), "/run".green().bold(), "Execute a previously generated script");
+            println!("  {} {}     {}", "│".bright_black(), "/provider".green().bold(), "Show current LLM provider info");
+            println!("  {} {}         {}", "│".bright_black(), "/lint".green().bold(), "Lint the last generated code (ruff)");
+            println!("  {} {}     {}", "│".bright_black(), "/security".green().bold(), "Run security scan (bandit)");
+            println!("  {} {}    {}", "│".bright_black(), "/dashboard".green().bold(), "Show dashboard URL");
+            println!("{}", "  ╰────────────────────────────────────────────".bright_black());
             println!();
             continue;
         }
@@ -457,22 +483,22 @@ async fn start_repl_loop(
             if conversation_history.is_empty() {
                 println!("{}", "No conversation history yet.".yellow());
             } else {
-                println!("\n{}", "Conversation History:".bright_cyan().bold());
+                println!("\n{}", "  ╭── Conversation History ────────────────────".bright_cyan());
                 for (i, msg) in conversation_history.iter().enumerate() {
                     let role_color = if msg.role == "user" {
                         msg.role.bright_blue()
                     } else {
                         msg.role.bright_green()
                     };
-                    println!("\n{}. [{}]", i + 1, role_color);
-                    let preview = if msg.content.len() > 100 {
-                        let end = find_char_boundary(&msg.content, 100);
-                        format!("{}...", &msg.content[..end])
+                    let preview = if msg.content.len() > 80 {
+                        let end = find_char_boundary(&msg.content, 80);
+                        format!("{}...", &msg.content[..end]).replace('\n', " ")
                     } else {
-                        msg.content.clone()
+                        msg.content.replace('\n', " ")
                     };
-                    println!("{}", preview.dimmed());
+                    println!("  {} {}. [{}] {}", "│".bright_cyan(), i + 1, role_color, preview.dimmed());
                 }
+                println!("{}", "  ╰────────────────────────────────────────────".bright_cyan());
                 println!();
             }
             continue;
@@ -515,14 +541,15 @@ async fn start_repl_loop(
                         println!("{}", "No generated scripts found.".yellow());
                     } else {
                         scripts.sort_by_key(|e| e.file_name());
-                        println!("\n{}", "Generated Scripts:".bright_cyan().bold());
+                        println!("\n{}", "  ╭── Generated Scripts ───────────────────────".bright_cyan());
                         for (i, entry) in scripts.iter().enumerate() {
-                            println!("  {}. {}", i + 1, entry.file_name().to_string_lossy().bright_white());
+                            println!("  {} {}. {}", "│".bright_cyan(), i + 1, entry.file_name().to_string_lossy().bright_white());
                         }
+                        println!("{}", "  ╰────────────────────────────────────────────".bright_cyan());
                         println!();
                     }
                 }
-                Err(e) => println!("{} {}", "✗ Failed to list scripts:".red(), e),
+                Err(e) => println!("{} {}", "✖ Failed to list scripts:".red(), e),
             }
             continue;
         }
