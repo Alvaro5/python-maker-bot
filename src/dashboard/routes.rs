@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::state::{ChatSession, DashboardState, ExecutionEvent, RuntimeSettings, ScriptEntry};
 use super::templates;
 use crate::api::{self, Message};
+use crate::interface::trim_history;
 use crate::utils::extract_python_code;
 
 use std::io::{BufRead, BufReader, Write};
@@ -188,7 +189,7 @@ pub async fn generate_code(
     };
 
     // Call the LLM
-    let result = api::generate_code_with_history(messages, &effective_config).await;
+    let result = api::generate_code_with_history(&messages, &effective_config).await;
 
     match result {
         Ok(raw_response) => {
@@ -217,14 +218,7 @@ pub async fn generate_code(
                     });
                     session.last_generated_code = code.clone();
                     // Enforce history limit
-                    let max = effective_config.max_history_messages;
-                    while session.messages.len() > max {
-                        if session.messages.len() >= 2 {
-                            session.messages.drain(..2);
-                        } else {
-                            session.messages.remove(0);
-                        }
-                    }
+                    trim_history(&mut session.messages, effective_config.max_history_messages);
                 }
             }
 
@@ -243,14 +237,7 @@ pub async fn generate_code(
                     role: "assistant".to_string(),
                     content: code.clone(),
                 });
-                let max = effective_config.max_history_messages;
-                while history.len() > max {
-                    if history.len() >= 2 {
-                        history.drain(..2);
-                    } else {
-                        history.remove(0);
-                    }
-                }
+                trim_history(&mut history, effective_config.max_history_messages);
             }
             {
                 let mut m = state.metrics.write().await;
@@ -790,7 +777,8 @@ pub async fn lint_code(
     let base_dir = state.executor.base_dir().to_path_buf();
 
     let result = tokio::task::spawn_blocking(move || {
-        let tmp_path = base_dir.join("_lint_check_tmp.py");
+        let tmp_name = format!("_lint_check_{}.py", std::process::id());
+        let tmp_path = base_dir.join(tmp_name);
         std::fs::write(&tmp_path, &code).map_err(|e| e.to_string())?;
         let r = crate::python_exec::CodeExecutor::lint_check_static(&tmp_path);
         let _ = std::fs::remove_file(&tmp_path);
@@ -850,7 +838,8 @@ pub async fn security_check_code(
     let base_dir = state.executor.base_dir().to_path_buf();
 
     let result = tokio::task::spawn_blocking(move || {
-        let tmp_path = base_dir.join("_security_check_tmp.py");
+        let tmp_name = format!("_security_check_{}.py", std::process::id());
+        let tmp_path = base_dir.join(tmp_name);
         std::fs::write(&tmp_path, &code).map_err(|e| e.to_string())?;
         let r = crate::python_exec::CodeExecutor::security_check_static(&tmp_path);
         let _ = std::fs::remove_file(&tmp_path);

@@ -34,10 +34,11 @@ impl SessionMetrics {
     }
 
     pub fn success_rate(&self) -> f64 {
-        if self.total_requests == 0 {
+        let total_executions = self.successful_executions + self.failed_executions;
+        if total_executions == 0 {
             return 0.0;
         }
-        (self.successful_executions as f64 / self.total_requests as f64) * 100.0
+        (self.successful_executions as f64 / total_executions as f64) * 100.0
     }
 
     pub fn display(&self) {
@@ -125,6 +126,7 @@ mod tests {
         let mut metrics = SessionMetrics::new();
         metrics.total_requests = 10;
         metrics.successful_executions = 8;
+        metrics.failed_executions = 2;
         assert_eq!(metrics.success_rate(), 80.0);
     }
 
@@ -133,7 +135,15 @@ mod tests {
         let mut metrics = SessionMetrics::new();
         metrics.total_requests = 5;
         metrics.successful_executions = 5;
+        metrics.failed_executions = 0;
         assert_eq!(metrics.success_rate(), 100.0);
+    }
+
+    #[test]
+    fn test_success_rate_no_executions() {
+        let mut metrics = SessionMetrics::new();
+        metrics.total_requests = 5; // requests made but none executed
+        assert_eq!(metrics.success_rate(), 0.0);
     }
 
     #[test]

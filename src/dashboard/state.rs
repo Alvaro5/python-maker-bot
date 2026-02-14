@@ -1,6 +1,6 @@
 use crate::api::Message;
 use crate::config::AppConfig;
-use crate::logger::{Logger, SessionMetrics};
+use crate::logger::SessionMetrics;
 use crate::python_exec::CodeExecutor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -139,7 +139,6 @@ pub struct DashboardState {
     pub last_generated_code: RwLock<String>,
     pub event_tx: broadcast::Sender<ExecutionEvent>,
     pub executor: CodeExecutor,
-    pub logger: Logger,
     /// Named chat sessions (keyed by UUID).
     pub sessions: RwLock<HashMap<String, ChatSession>>,
     /// ID of the currently active chat session.
@@ -157,7 +156,6 @@ impl DashboardState {
     pub fn new(
         config: AppConfig,
         executor: CodeExecutor,
-        logger: Logger,
     ) -> Arc<Self> {
         let (event_tx, _) = broadcast::channel(256);
         let runtime_settings = RuntimeSettings::from_config(&config);
@@ -181,7 +179,6 @@ impl DashboardState {
             last_generated_code: RwLock::new(String::new()),
             event_tx,
             executor,
-            logger,
             sessions: RwLock::new(sessions),
             active_session_id: RwLock::new(default_session_id),
             runtime_settings: RwLock::new(runtime_settings),

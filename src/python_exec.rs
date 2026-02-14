@@ -1,11 +1,17 @@
 use crate::utils::{ensure_dir, extract_imports, is_stdlib};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use regex::Regex;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::LazyLock;
 use std::time::Duration;
 use wait_timeout::ChildExt;
+
+/// Regex matching ruff rule codes that indicate errors (E/F rules).
+static LINT_ERROR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[EF]\d{3,4}\b").unwrap());
 
 const DOCKER_IMAGE: &str = "python-sandbox";
 
@@ -457,7 +463,7 @@ impl CodeExecutor {
         }
     }
 
-    /// Détecte si le code nécessite une exécution interactive (pygame, input(), etc.)
+    /// Detect whether the code requires interactive execution (pygame, input(), etc.)
     pub fn needs_interactive_mode(&self, code: &str) -> bool {
         let interactive_keywords = [
             "pygame",
@@ -501,23 +507,29 @@ impl CodeExecutor {
     ///
     /// Returns `Ok(LintResult)` with any diagnostics found.
     /// The caller decides whether warnings should block execution.
-    pub fn lint_check(&self, path: &PathBuf) -> Result<LintResult> {
+    pub fn lint_check(&self, path: &Path) -> Result<LintResult> {
+        Self::lint_check_static(path)
+    }
+
+    /// Static version of `lint_check` that doesn't require a `CodeExecutor` instance.
+    /// Used by the dashboard's on-demand lint endpoint.
+    pub fn lint_check_static(path: &Path) -> Result<LintResult> {
         let output = Command::new("ruff")
             .args(["check", "--output-format=concise", "--no-fix"])
             .arg(path)
             .output()
             .context("Failed to run ruff. Is it installed? (pip install ruff)")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
         // ruff exits 0 = clean, 1 = issues found, 2 = internal error
         let diagnostics: Vec<LintDiagnostic> = stdout
             .lines()
             .filter(|line| !line.trim().is_empty() && !line.starts_with("Found "))
             .map(|line| {
-                // Try to parse severity from the rule code (E = error, W = warning, etc.)
-                let severity = if line.contains(" F") || line.contains(" E") {
+                // Match ruff rule codes: E/F followed by 3-4 digits
+                let severity = if LINT_ERROR_RE.is_match(line) {
                     LintSeverity::Error
                 } else {
                     LintSeverity::Warning
@@ -532,50 +544,6 @@ impl CodeExecutor {
         let has_errors = diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
 
         // Capture the "Found N ..." summary line if present
-        let summary = stdout
-            .lines()
-            .find(|line| line.starts_with("Found "))
-            .unwrap_or("")
-            .to_string();
-
-        Ok(LintResult {
-            passed: diagnostics.is_empty(),
-            has_errors,
-            diagnostics,
-            summary,
-            stderr,
-        })
-    }
-
-    /// Static version of `lint_check` that doesn't require a `CodeExecutor` instance.
-    /// Used by the dashboard's on-demand lint endpoint.
-    pub fn lint_check_static(path: &PathBuf) -> Result<LintResult> {
-        let output = Command::new("ruff")
-            .args(["check", "--output-format=concise", "--no-fix"])
-            .arg(path)
-            .output()
-            .context("Failed to run ruff. Is it installed? (pip install ruff)")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        let diagnostics: Vec<LintDiagnostic> = stdout
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.starts_with("Found "))
-            .map(|line| {
-                let severity = if line.contains(" F") || line.contains(" E") {
-                    LintSeverity::Error
-                } else {
-                    LintSeverity::Warning
-                };
-                LintDiagnostic {
-                    message: line.to_string(),
-                    severity,
-                }
-            })
-            .collect();
-
-        let has_errors = diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
         let summary = stdout
             .lines()
             .find(|line| line.starts_with("Found "))
@@ -609,18 +577,23 @@ impl CodeExecutor {
     /// Uses JSON output for reliable parsing. Returns `Ok(SecurityResult)` with
     /// any findings. The caller decides whether high-severity findings should
     /// block execution.
-    pub fn security_check(&self, path: &PathBuf) -> Result<SecurityResult> {
+    pub fn security_check(&self, path: &Path) -> Result<SecurityResult> {
+        Self::security_check_static(path)
+    }
+
+    /// Static version of `security_check` that doesn't require a `CodeExecutor` instance.
+    /// Used by the dashboard's on-demand security endpoint.
+    pub fn security_check_static(path: &Path) -> Result<SecurityResult> {
         let output = Command::new("bandit")
             .args(["-f", "json", "-q"])
             .arg(path)
             .output()
             .context("Failed to run bandit. Is it installed? (pip install bandit)")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
         // bandit exits 0 = clean, 1 = issues found
-        // Parse JSON output
         let diagnostics = Self::parse_bandit_json(&stdout);
         let has_high_severity = diagnostics.iter().any(|d| d.severity == SecuritySeverity::High);
         let count = diagnostics.len();
@@ -630,53 +603,6 @@ impl CodeExecutor {
             let high = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::High).count();
             let med = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Medium).count();
             let low = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Low).count();
-            format!(
-                "Found {} issue(s): {} high, {} medium, {} low severity",
-                count, high, med, low
-            )
-        };
-
-        Ok(SecurityResult {
-            passed: diagnostics.is_empty(),
-            has_high_severity,
-            diagnostics,
-            summary,
-            stderr,
-        })
-    }
-
-    /// Static version of `security_check` that doesn't require a `CodeExecutor` instance.
-    /// Used by the dashboard's on-demand security endpoint.
-    pub fn security_check_static(path: &PathBuf) -> Result<SecurityResult> {
-        let output = Command::new("bandit")
-            .args(["-f", "json", "-q"])
-            .arg(path)
-            .output()
-            .context("Failed to run bandit. Is it installed? (pip install bandit)")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        let diagnostics = Self::parse_bandit_json(&stdout);
-        let has_high_severity = diagnostics
-            .iter()
-            .any(|d| d.severity == SecuritySeverity::High);
-        let count = diagnostics.len();
-        let summary = if count == 0 {
-            String::new()
-        } else {
-            let high = diagnostics
-                .iter()
-                .filter(|d| d.severity == SecuritySeverity::High)
-                .count();
-            let med = diagnostics
-                .iter()
-                .filter(|d| d.severity == SecuritySeverity::Medium)
-                .count();
-            let low = diagnostics
-                .iter()
-                .filter(|d| d.severity == SecuritySeverity::Low)
-                .count();
             format!(
                 "Found {} issue(s): {} high, {} medium, {} low severity",
                 count, high, med, low
@@ -738,7 +664,7 @@ impl CodeExecutor {
 
     /// Run `python3 -m py_compile <path>` and return Ok(()) on success or
     /// Err(message) with the compiler output on failure.
-    pub fn syntax_check(&self, path: &PathBuf) -> Result<(), String> {
+    pub fn syntax_check(&self, path: &Path) -> Result<(), String> {
         let primary = self.python_executable.as_str();
         let python_cmds = [primary, "python"];
         for cmd in python_cmds {
@@ -762,10 +688,10 @@ impl CodeExecutor {
         Err("Could not run syntax check with python/python3".to_string())
     }
 
-    /// Écrit un script Python dans un fichier et l'exécute avec l'interpréteur `python` ou `python3`.
+    /// Write a Python script to a file and execute it with the `python` or `python3` interpreter.
     ///
-    /// Attention : ce code exécute du Python généré automatiquement.
-    /// À n'utiliser que dans un environnement de test contrôlé.
+    /// Warning: this executes automatically generated Python code.
+    /// Only use in a controlled test environment.
     #[allow(dead_code)] // Used by tests
     pub fn write_and_run(&self, code: &str) -> Result<CodeExecutionResult> {
         self.write_and_run_with_mode(code, ExecutionMode::Captured)
@@ -802,7 +728,7 @@ impl CodeExecutor {
     /// When `self.use_docker` is true, runs inside the `python-sandbox` container.
     pub fn execute_script(
         &self,
-        script_path: &PathBuf,
+        script_path: &Path,
         mode: ExecutionMode,
         timeout_secs: u64,
         venv: Option<&std::path::Path>,
@@ -822,7 +748,7 @@ impl CodeExecutor {
     /// This avoids mutating the base Docker image.
     fn execute_script_docker(
         &self,
-        script_path: &PathBuf,
+        script_path: &Path,
         mode: ExecutionMode,
         timeout_secs: u64,
         deps: &[String],
@@ -903,7 +829,7 @@ impl CodeExecutor {
                         let status = process.wait()
                             .context("Failed to wait for Docker process")?;
                         Ok(CodeExecutionResult {
-                            script_path: script_path.clone(),
+                            script_path: script_path.to_path_buf(),
                             stdout: String::from("[Interactive mode - output displayed directly]"),
                             stderr: String::new(),
                             exit_code: status.code(),
@@ -944,7 +870,7 @@ impl CodeExecutor {
                                     let stdout = read_pipe(process.stdout.take());
                                     let stderr = read_pipe(process.stderr.take());
                                     Ok(CodeExecutionResult {
-                                        script_path: script_path.clone(),
+                                        script_path: script_path.to_path_buf(),
                                         stdout,
                                         stderr,
                                         exit_code: status.code(),
@@ -954,7 +880,7 @@ impl CodeExecutor {
                                     let _ = process.kill();
                                     let _ = process.wait();
                                     Ok(CodeExecutionResult {
-                                        script_path: script_path.clone(),
+                                        script_path: script_path.to_path_buf(),
                                         stdout: String::new(),
                                         stderr: format!(
                                             "Process timed out after {} seconds (Docker). \
@@ -971,7 +897,7 @@ impl CodeExecutor {
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                             Ok(CodeExecutionResult {
-                                script_path: script_path.clone(),
+                                script_path: script_path.to_path_buf(),
                                 stdout,
                                 stderr,
                                 exit_code: output.status.code(),
@@ -988,7 +914,7 @@ impl CodeExecutor {
     /// When `venv` is provided, uses the venv's Python interpreter instead.
     fn execute_script_host(
         &self,
-        script_path: &PathBuf,
+        script_path: &Path,
         mode: ExecutionMode,
         timeout_secs: u64,
         venv: Option<&std::path::Path>,
@@ -1023,7 +949,7 @@ impl CodeExecutor {
                                 .with_context(|| format!("Failed to wait for process with {}", cmd))?;
 
                             return Ok(CodeExecutionResult {
-                                script_path: script_path.clone(),
+                                script_path: script_path.to_path_buf(),
                                 stdout: String::from("[Interactive mode - output displayed directly]"),
                                 stderr: String::new(),
                                 exit_code: status.code(),
@@ -1054,7 +980,7 @@ impl CodeExecutor {
                                         let stdout = read_pipe(process.stdout.take());
                                         let stderr = read_pipe(process.stderr.take());
                                         return Ok(CodeExecutionResult {
-                                            script_path: script_path.clone(),
+                                            script_path: script_path.to_path_buf(),
                                             stdout,
                                             stderr,
                                             exit_code: status.code(),
@@ -1065,7 +991,7 @@ impl CodeExecutor {
                                         let _ = process.kill();
                                         let _ = process.wait();
                                         return Ok(CodeExecutionResult {
-                                            script_path: script_path.clone(),
+                                            script_path: script_path.to_path_buf(),
                                             stdout: String::new(),
                                             stderr: format!(
                                                 "Process timed out after {} seconds. \
@@ -1083,7 +1009,7 @@ impl CodeExecutor {
                                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                                 return Ok(CodeExecutionResult {
-                                    script_path: script_path.clone(),
+                                    script_path: script_path.to_path_buf(),
                                     stdout,
                                     stderr,
                                     exit_code: output.status.code(),
@@ -1109,7 +1035,7 @@ impl CodeExecutor {
     fn execute_with_interpreter(
         &self,
         interpreter: &str,
-        script_path: &PathBuf,
+        script_path: &Path,
         mode: ExecutionMode,
         timeout_secs: u64,
     ) -> Result<CodeExecutionResult> {
@@ -1126,7 +1052,7 @@ impl CodeExecutor {
                 let status = child.wait_with_output()
                     .context("Failed to wait for venv process")?;
                 Ok(CodeExecutionResult {
-                    script_path: script_path.clone(),
+                    script_path: script_path.to_path_buf(),
                     stdout: String::from("[Interactive mode - output displayed directly]"),
                     stderr: String::new(),
                     exit_code: status.status.code(),
@@ -1149,7 +1075,7 @@ impl CodeExecutor {
                             let stdout = read_pipe(process.stdout.take());
                             let stderr = read_pipe(process.stderr.take());
                             Ok(CodeExecutionResult {
-                                script_path: script_path.clone(),
+                                script_path: script_path.to_path_buf(),
                                 stdout,
                                 stderr,
                                 exit_code: status.code(),
@@ -1159,7 +1085,7 @@ impl CodeExecutor {
                             let _ = process.kill();
                             let _ = process.wait();
                             Ok(CodeExecutionResult {
-                                script_path: script_path.clone(),
+                                script_path: script_path.to_path_buf(),
                                 stdout: String::new(),
                                 stderr: format!(
                                     "Process timed out after {} seconds. \
@@ -1176,7 +1102,7 @@ impl CodeExecutor {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                     Ok(CodeExecutionResult {
-                        script_path: script_path.clone(),
+                        script_path: script_path.to_path_buf(),
                         stdout,
                         stderr,
                         exit_code: output.status.code(),
@@ -1199,8 +1125,8 @@ impl CodeExecutor {
     /// * `deps` — packages to install in a Docker venv (Docker+venv mode only).
     pub fn spawn_piped(
         &self,
-        script_path: &PathBuf,
-        venv: Option<&std::path::Path>,
+        script_path: &Path,
+        venv: Option<&Path>,
         deps: &[String],
     ) -> Result<std::process::Child> {
         if self.use_docker {
@@ -1213,7 +1139,7 @@ impl CodeExecutor {
     /// Spawn a piped process inside the Docker sandbox.
     fn spawn_piped_docker(
         &self,
-        script_path: &PathBuf,
+        script_path: &Path,
         deps: &[String],
     ) -> Result<std::process::Child> {
         let absolute_path = std::fs::canonicalize(script_path)
@@ -1271,8 +1197,8 @@ impl CodeExecutor {
     /// Spawn a piped process on the host.
     fn spawn_piped_host(
         &self,
-        script_path: &PathBuf,
-        venv: Option<&std::path::Path>,
+        script_path: &Path,
+        venv: Option<&Path>,
     ) -> Result<std::process::Child> {
         // Choose the Python interpreter
         let interpreter: String = if let Some(venv_path) = venv {

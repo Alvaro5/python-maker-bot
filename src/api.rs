@@ -198,7 +198,7 @@ When the request involves a game or graphical application:\n\
 /// OpenAI-compatible endpoint). All providers use the same chat
 /// completions request/response format.
 pub async fn generate_code_with_history(
-    messages: Vec<Message>,
+    messages: &[Message],
     config: &AppConfig,
 ) -> Result<String> {
     let provider = Provider::from_config(&config.provider)?;
@@ -212,7 +212,7 @@ pub async fn generate_code_with_history(
     }];
 
     // Add conversation history
-    full_messages.extend(messages);
+    full_messages.extend_from_slice(messages);
 
     let body = ChatRequest {
         model: config.model.clone(),
@@ -222,7 +222,10 @@ pub async fn generate_code_with_history(
         stream: Some(false), // always disable streaming
     };
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .context("Failed to create HTTP client")?;
 
     // Retry loop with exponential backoff
     let mut last_err: Option<anyhow::Error> = None;
@@ -237,7 +240,6 @@ pub async fn generate_code_with_history(
             .post(&api_url)
             .headers(headers.clone())
             .json(&body)
-            .timeout(Duration::from_secs(120))
             .send()
             .await;
 
@@ -472,7 +474,8 @@ mod tests {
     #[test]
     fn test_provider_ollama_auth_no_key() {
         // Ollama should not require any env var when LLM_API_KEY is unset
-        std::env::remove_var("LLM_API_KEY");
+        // SAFETY: This test is not run in parallel with other tests that read LLM_API_KEY.
+        unsafe { std::env::remove_var("LLM_API_KEY") };
         let headers = Provider::Ollama.auth_headers().unwrap();
         assert!(!headers.contains_key(AUTHORIZATION));
     }

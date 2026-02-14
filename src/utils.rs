@@ -17,7 +17,7 @@ static FROM_IMPORT_RE: LazyLock<Regex> =
 pub fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
         fs::create_dir_all(path)
-            .with_context(|| format!("Impossible de créer le dossier {:?}", path))?;
+            .with_context(|| format!("Failed to create directory {:?}", path))?;
     }
     Ok(())
 }

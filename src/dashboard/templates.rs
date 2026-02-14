@@ -13,7 +13,6 @@ pub struct IndexTemplate<'a> {
     pub model: &'a str,
     pub docker_enabled: bool,
     pub venv_enabled: bool,
-    pub dashboard_port: u16,
     pub scripts: &'a [ScriptEntry],
     pub total_requests: usize,
     pub successful_executions: usize,
@@ -70,7 +69,6 @@ pub fn render_index(
         model: &settings.model,
         docker_enabled: settings.use_docker,
         venv_enabled: settings.use_venv,
-        dashboard_port: 0, // Not used in new template
         scripts,
         total_requests: metrics.total_requests,
         successful_executions: metrics.successful_executions,

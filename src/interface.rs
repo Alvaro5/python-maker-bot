@@ -69,7 +69,7 @@ impl Completer for CommandCompleter {
     }
 }
 
-// Fonction publique utilisable depuis main.rs affichant un bandeau de bienvenue
+// Public function called from main.rs to display the welcome banner
 pub fn print_banner() {
     // Clear screen first
     print!("\x1B[2J\x1B[1;1H");
@@ -93,10 +93,14 @@ pub fn print_banner() {
 // Utility function to ask the user a question and return their answer
 pub fn ask_user(question: &str) -> String {
     print!("{question}");
-    io::stdout().flush().unwrap();
+    if io::stdout().flush().is_err() {
+        return String::new();
+    }
 
     let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
+    if io::stdin().read_line(&mut input).is_err() {
+        return String::new();
+    }
     input.trim().to_string()
 }
 
@@ -106,7 +110,6 @@ pub fn confirm(question: &str) -> bool {
     ans.to_lowercase().starts_with('y')
 }
 
-// Display function for generated Python code
 // Display function for generated Python code
 pub fn display_code(code: &str) {
     let border = "────────────────────────────────────────────────────────".bright_black();
@@ -137,7 +140,7 @@ pub fn display_code(code: &str) {
 
 /// Trim conversation history to at most `max` messages, dropping the oldest
 /// user/assistant pairs first.
-fn trim_history(history: &mut Vec<Message>, max: usize) {
+pub fn trim_history(history: &mut Vec<Message>, max: usize) {
     while history.len() > max {
         // Remove in pairs (user + assistant) from the front
         if history.len() >= 2 {
@@ -215,13 +218,12 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
     }
 
     // Check linter availability
-    // Check linter availability
     let linter_available = if config.use_linting {
         if CodeExecutor::check_linter_available() {
             println!("{} {}", "✔".green(), "Linting enabled (ruff).".white());
             true
         } else {
-            println!("{} {}", "⚠".yellow(), "Linting enabled but ruff not found. Install with: pip install ruff");
+            println!("{} Linting enabled but ruff not found. Install with: pip install ruff", "⚠".yellow());
             println!("  {} Linting will be skipped.", "ℹ".blue());
             false
         }
@@ -235,7 +237,7 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
             println!("{} {}", "✔".green(), "Security scanning enabled (bandit).".white());
             true
         } else {
-            println!("{} {}", "⚠".yellow(), "Security scanning enabled but bandit not found. Install with: pip install bandit");
+            println!("{} Security scanning enabled but bandit not found. Install with: pip install bandit", "⚠".yellow());
             println!("  {} Security scanning will be skipped.", "ℹ".blue());
             false
         }
@@ -284,7 +286,11 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
 pub async fn start_repl(config: &AppConfig) {
     print_banner();
 
-    let ctx = match init_repl_context(config) {
+    let config_clone = config.clone();
+    let ctx = match tokio::task::spawn_blocking(move || init_repl_context(&config_clone))
+        .await
+        .expect("init_repl_context task panicked")
+    {
         Some(c) => c,
         None => return,
     };
@@ -299,19 +305,22 @@ pub async fn start_repl(config: &AppConfig) {
 pub async fn start_repl_with_dashboard(config: &AppConfig) {
     print_banner();
 
-    let ctx = match init_repl_context(config) {
+    let config_clone = config.clone();
+    let ctx = match tokio::task::spawn_blocking(move || init_repl_context(&config_clone))
+        .await
+        .expect("init_repl_context task panicked")
+    {
         Some(c) => c,
         None => return,
     };
 
-    // Create a second executor+logger for the dashboard's REST API
+    // Create a second executor for the dashboard's REST API
     let dashboard_executor = CodeExecutor::new(
         &config.generated_dir, ctx.use_docker, config.use_venv, &config.python_executable
     ).expect("Failed to create generated scripts directory");
-    let dashboard_logger = Logger::new(&config.log_dir).expect("Failed to create logger");
 
     // Create shared dashboard state and spawn the web server
-    let state = DashboardState::new(config.clone(), dashboard_executor, dashboard_logger);
+    let state = DashboardState::new(config.clone(), dashboard_executor);
     let dashboard_port = config.dashboard_port;
 
     let server_state = state.clone();
@@ -379,20 +388,21 @@ async fn start_repl_loop(
         }
 
         if prompt == "/help" {
+            let bar = "│".bright_black();
             println!("\n{}", "  ╭── Available Commands ──────────────────────".bright_black());
-            println!("  {} {}    {}", "│".bright_black(), "/quit, /exit".green().bold(), "Exit the program");
-            println!("  {} {}         {}", "│".bright_black(), "/help".green().bold(), "Show this help output");
-            println!("  {} {}        {}", "│".bright_black(), "/clear".green().bold(), "Clear conversation history");
-            println!("  {} {}       {}", "│".bright_black(), "/refine".green().bold(), "Refine the last generated code");
-            println!("  {} {} <file> {}", "│".bright_black(), "/save".green().bold(), "Save last code to a file");
-            println!("  {} {}      {}", "│".bright_black(), "/history".green().bold(), "Show conversation history");
-            println!("  {} {}        {}", "│".bright_black(), "/stats".green().bold(), "Show session statistics");
-            println!("  {} {}         {}", "│".bright_black(), "/list".green().bold(), "List all previously generated scripts");
-            println!("  {} {} <file>  {}", "│".bright_black(), "/run".green().bold(), "Execute a previously generated script");
-            println!("  {} {}     {}", "│".bright_black(), "/provider".green().bold(), "Show current LLM provider info");
-            println!("  {} {}         {}", "│".bright_black(), "/lint".green().bold(), "Lint the last generated code (ruff)");
-            println!("  {} {}     {}", "│".bright_black(), "/security".green().bold(), "Run security scan (bandit)");
-            println!("  {} {}    {}", "│".bright_black(), "/dashboard".green().bold(), "Show dashboard URL");
+            println!("  {bar} {}    Exit the program", "/quit, /exit".green().bold());
+            println!("  {bar} {}         Show this help output", "/help".green().bold());
+            println!("  {bar} {}        Clear conversation history", "/clear".green().bold());
+            println!("  {bar} {}       Refine the last generated code", "/refine".green().bold());
+            println!("  {bar} {} <file> Save last code to a file", "/save".green().bold());
+            println!("  {bar} {}      Show conversation history", "/history".green().bold());
+            println!("  {bar} {}        Show session statistics", "/stats".green().bold());
+            println!("  {bar} {}         List all previously generated scripts", "/list".green().bold());
+            println!("  {bar} {} <file>  Execute a previously generated script", "/run".green().bold());
+            println!("  {bar} {}     Show current LLM provider info", "/provider".green().bold());
+            println!("  {bar} {}         Lint the last generated code (ruff)", "/lint".green().bold());
+            println!("  {bar} {}     Run security scan (bandit)", "/security".green().bold());
+            println!("  {bar} {}    Show dashboard URL", "/dashboard".green().bold());
             println!("{}", "  ╰────────────────────────────────────────────".bright_black());
             println!();
             continue;
@@ -680,7 +690,7 @@ async fn start_repl_loop(
 
         // Call Hugging Face with conversation history
         let spinner = start_spinner("Generating code...");
-        let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+        let api_result = api::generate_code_with_history(&conversation_history, config).await;
         stop_spinner(&spinner);
 
         match api_result {
@@ -740,7 +750,7 @@ async fn start_repl_loop(
                         let _ = logger.log_api_request(&format!("Auto-refine syntax: {}", syntax_err));
 
                         let spinner = start_spinner("Auto-refining code...");
-                        let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                        let api_result = api::generate_code_with_history(&conversation_history, config).await;
                         stop_spinner(&spinner);
 
                         match api_result {
@@ -806,7 +816,7 @@ async fn start_repl_loop(
                                     let _ = logger.log_api_request(&format!("Auto-refine lint: {}", lint_issues));
 
                                     let spinner = start_spinner("Auto-refining code...");
-                                    let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                                    let api_result = api::generate_code_with_history(&conversation_history, config).await;
                                     stop_spinner(&spinner);
 
                                     match api_result {
@@ -959,7 +969,7 @@ async fn start_repl_loop(
                                 let _ = logger.log_api_request(&format!("Auto-refine runtime: {}", result.stderr));
 
                                 let spinner = start_spinner("Auto-refining code...");
-                                let api_result = api::generate_code_with_history(conversation_history.clone(), config).await;
+                                let api_result = api::generate_code_with_history(&conversation_history, config).await;
                                 stop_spinner(&spinner);
 
                                 match api_result {
