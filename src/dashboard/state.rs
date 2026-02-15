@@ -2,6 +2,7 @@ use crate::api::Message;
 use crate::config::AppConfig;
 use crate::logger::SessionMetrics;
 use crate::python_exec::CodeExecutor;
+use crate::rag::RagStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -85,6 +86,7 @@ pub struct RuntimeSettings {
     pub execution_timeout_secs: u64,
     pub auto_install_deps: bool,
     pub max_tokens: u32,
+    pub enable_rag: bool,
 }
 
 impl RuntimeSettings {
@@ -102,6 +104,7 @@ impl RuntimeSettings {
             execution_timeout_secs: config.execution_timeout_secs,
             auto_install_deps: config.auto_install_deps,
             max_tokens: config.max_tokens,
+            enable_rag: config.enable_rag,
         }
     }
 
@@ -120,6 +123,7 @@ impl RuntimeSettings {
             execution_timeout_secs: self.execution_timeout_secs,
             auto_install_deps: self.auto_install_deps,
             max_tokens: self.max_tokens,
+            enable_rag: self.enable_rag,
             ..base.clone()
         }
     }
@@ -149,6 +153,8 @@ pub struct DashboardState {
     pub running_pid: Mutex<Option<u32>>,
     /// Stdin handle of the currently running script process (for interactive input).
     pub running_stdin: Mutex<Option<std::process::ChildStdin>>,
+    /// Shared RAG store for context-augmented generation.
+    pub rag_store: RwLock<RagStore>,
 }
 
 impl DashboardState {
@@ -184,6 +190,7 @@ impl DashboardState {
             runtime_settings: RwLock::new(runtime_settings),
             running_pid: Mutex::new(None),
             running_stdin: Mutex::new(None),
+            rag_store: RwLock::new(RagStore::new()),
         })
     }
 

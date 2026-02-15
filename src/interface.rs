@@ -8,6 +8,7 @@ use crate::dashboard::state::{DashboardState, ExecutionEvent};
 use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity, SecuritySeverity};
 use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
+use crate::rag::{self, RagStore};
 use colored::*;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -18,6 +19,7 @@ use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Va
 const COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/refine",
     "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint", "/security", "/dashboard",
+    "/context",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -358,6 +360,7 @@ async fn start_repl_loop(
     // Conversation history for multi-turn refinement
     let mut conversation_history: Vec<Message> = Vec::new();
     let mut last_generated_code = String::new();
+    let mut rag_store = RagStore::new();
 
     // Track last synced metrics for delta-based dashboard updates
     let mut last_synced_metrics = SessionMetrics::new();
@@ -403,6 +406,7 @@ async fn start_repl_loop(
             println!("  {bar} {}         Lint the last generated code (ruff)", "/lint".green().bold());
             println!("  {bar} {}     Run security scan (bandit)", "/security".green().bold());
             println!("  {bar} {}    Show dashboard URL", "/dashboard".green().bold());
+            println!("  {bar} {} <file> Load file as RAG context (txt/md/csv)", "/context".green().bold());
             println!("{}", "  ╰────────────────────────────────────────────".bright_black());
             println!();
             continue;
@@ -656,6 +660,39 @@ async fn start_repl_loop(
             continue;
         }
 
+        if prompt.starts_with("/context") {
+            if !config.enable_rag {
+                println!("{}", "RAG is disabled. Set enable_rag = true in pymakebot.toml".yellow());
+                continue;
+            }
+
+            let parts: Vec<&str> = prompt.splitn(2, ' ').collect();
+            let file_path = if parts.len() > 1 {
+                parts[1].to_string()
+            } else {
+                ask_user("Enter file path (txt/md/csv): ")
+            };
+
+            if file_path.is_empty() {
+                println!("{}", "Context load cancelled.".yellow());
+                continue;
+            }
+
+            let spinner = start_spinner("Loading and embedding file...");
+            match rag_store.load_file(&file_path, config).await {
+                Ok(count) => {
+                    stop_spinner(&spinner);
+                    println!("{} Loaded {} chunks from {}",
+                        "✓".green(), count.to_string().bright_white(), file_path.bright_cyan());
+                }
+                Err(e) => {
+                    stop_spinner(&spinner);
+                    println!("{} {}", "✗ Failed to load context:".red(), e);
+                }
+            }
+            continue;
+        }
+
         if prompt == "/refine" {
             if last_generated_code.is_empty() {
                 println!("{}", "No code to refine. Generate some code first!".yellow());
@@ -671,16 +708,33 @@ async fn start_repl_loop(
                 continue;
             }
 
-            // Add refinement request to history
+            // Add refinement request to history (with optional RAG augmentation)
+            let refine_content = format!("Please refine the previous code: {}", refinement);
+            let final_refine = if config.enable_rag && !rag_store.is_empty() {
+                match rag_store.retrieve(refinement, 3, config).await {
+                    Ok(chunks) if !chunks.is_empty() => rag::build_rag_prompt(&chunks, &refine_content),
+                    _ => refine_content,
+                }
+            } else {
+                refine_content
+            };
             conversation_history.push(Message {
                 role: "user".to_string(),
-                content: format!("Please refine the previous code: {}", refinement),
+                content: final_refine,
             });
         } else {
-            // Regular prompt - add to history
+            // Regular prompt - add to history (with optional RAG augmentation)
+            let final_prompt = if config.enable_rag && !rag_store.is_empty() {
+                match rag_store.retrieve(&prompt, 3, config).await {
+                    Ok(chunks) if !chunks.is_empty() => rag::build_rag_prompt(&chunks, &prompt),
+                    _ => prompt.clone(),
+                }
+            } else {
+                prompt.clone()
+            };
             conversation_history.push(Message {
                 role: "user".to_string(),
-                content: prompt.clone(),
+                content: final_prompt,
             });
         }
 

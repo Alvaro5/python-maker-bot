@@ -25,6 +25,8 @@ pub async fn start_dashboard(state: Arc<DashboardState>, port: u16) -> anyhow::R
         .route("/api/execute", post(routes::execute_code))
         .route("/api/execute/kill", post(routes::kill_execution))
         .route("/api/execute/input", post(routes::send_input))
+        // RAG
+        .route("/api/rag/load", post(routes::load_rag_context))
         // Lint & Security
         .route("/api/lint", post(routes::lint_code))
         .route("/api/security", post(routes::security_check_code))

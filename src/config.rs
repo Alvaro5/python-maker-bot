@@ -24,6 +24,9 @@ pub struct AppConfig {
     pub python_executable: String,
     pub enable_dashboard: bool,
     pub dashboard_port: u16,
+    pub enable_rag: bool,
+    pub rag_embedding_model: String,
+    pub rag_chunk_size: usize,
 }
 
 impl Default for AppConfig {
@@ -47,6 +50,9 @@ impl Default for AppConfig {
             python_executable: "python3".to_string(),
             enable_dashboard: false,
             dashboard_port: 3000,
+            enable_rag: false,
+            rag_embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+            rag_chunk_size: 1024,
         }
     }
 }
@@ -101,6 +107,9 @@ mod tests {
         assert_eq!(cfg.generated_dir, "generated");
         assert!(!cfg.enable_dashboard);
         assert_eq!(cfg.dashboard_port, 3000);
+        assert!(!cfg.enable_rag);
+        assert_eq!(cfg.rag_embedding_model, "sentence-transformers/all-MiniLM-L6-v2");
+        assert_eq!(cfg.rag_chunk_size, 1024);
     }
 
     #[test]

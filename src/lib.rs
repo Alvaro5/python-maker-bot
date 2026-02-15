@@ -8,6 +8,7 @@ pub mod python_exec;
 pub mod interface;
 pub mod utils;
 pub mod logger;
+pub mod rag;
 
 /// Run the application: load `.env`, load config, and start the REPL.
 ///

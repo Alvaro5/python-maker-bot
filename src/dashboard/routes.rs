@@ -10,6 +10,7 @@ use super::state::{ChatSession, DashboardState, ExecutionEvent, RuntimeSettings,
 use super::templates;
 use crate::api::{self, Message};
 use crate::interface::trim_history;
+use crate::rag;
 use crate::utils::extract_python_code;
 
 use std::io::{BufRead, BufReader, Write};
@@ -187,6 +188,23 @@ pub async fn generate_code(
         let settings = state.runtime_settings.read().await;
         settings.to_app_config(&state.config)
     };
+
+    // Inject RAG context if enabled and store is non-empty
+    let mut messages = messages;
+    if effective_config.enable_rag {
+        let rag_store = state.rag_store.read().await;
+        if !rag_store.is_empty() {
+            if let Ok(chunks) = rag_store.retrieve(&req.prompt, 3, &effective_config).await {
+                if !chunks.is_empty() {
+                    if let Some(last) = messages.last_mut() {
+                        if last.role == "user" {
+                            last.content = rag::build_rag_prompt(&chunks, &last.content);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Call the LLM
     let result = api::generate_code_with_history(&messages, &effective_config).await;
@@ -1214,6 +1232,63 @@ pub struct ContainerInfo {
     pub image: String,
     pub status: String,
     pub names: String,
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RAG Context Loading
+// ══════════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct LoadContextRequest {
+    pub file_path: String,
+}
+
+#[derive(Serialize)]
+pub struct LoadContextResponse {
+    pub success: bool,
+    pub chunks_loaded: usize,
+    pub error: String,
+}
+
+/// POST /api/rag/load — load a file into the RAG store.
+pub async fn load_rag_context(
+    State(state): State<Arc<DashboardState>>,
+    Json(req): Json<LoadContextRequest>,
+) -> impl IntoResponse {
+    if req.file_path.trim().is_empty() {
+        return Json(LoadContextResponse {
+            success: false,
+            chunks_loaded: 0,
+            error: "File path is required.".to_string(),
+        });
+    }
+
+    let effective_config = {
+        let settings = state.runtime_settings.read().await;
+        settings.to_app_config(&state.config)
+    };
+
+    if !effective_config.enable_rag {
+        return Json(LoadContextResponse {
+            success: false,
+            chunks_loaded: 0,
+            error: "RAG is disabled. Set enable_rag = true in pymakebot.toml".to_string(),
+        });
+    }
+
+    let mut rag_store = state.rag_store.write().await;
+    match rag_store.load_file(&req.file_path, &effective_config).await {
+        Ok(count) => Json(LoadContextResponse {
+            success: true,
+            chunks_loaded: count,
+            error: String::new(),
+        }),
+        Err(e) => Json(LoadContextResponse {
+            success: false,
+            chunks_loaded: 0,
+            error: e.to_string(),
+        }),
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════

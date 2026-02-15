@@ -288,6 +288,110 @@ pub async fn generate_code_with_history(
     Err(last_err.unwrap_or_else(|| anyhow!("All retry attempts exhausted")))
 }
 
+// ── Embedding types ────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct HfEmbedRequest {
+    inputs: String,
+}
+
+#[derive(Serialize)]
+struct OllamaEmbedRequest {
+    model: String,
+    input: String,
+}
+
+#[derive(Deserialize)]
+struct OllamaEmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+}
+
+/// Generate embeddings for a text string using the configured provider's embedding API.
+pub async fn generate_embeddings(
+    text: &str,
+    embedding_model: &str,
+    config: &AppConfig,
+) -> Result<Vec<f32>> {
+    let provider = Provider::from_config(&config.provider)?;
+    let headers = provider.auth_headers()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    match provider {
+        Provider::HuggingFace | Provider::OpenAiCompatible => {
+            let url = format!(
+                "https://api-inference.huggingface.co/models/{}",
+                embedding_model
+            );
+            let body = HfEmbedRequest {
+                inputs: text.to_string(),
+            };
+
+            let resp = client.post(&url).headers(headers).json(&body).send().await
+                .context("Embedding API request failed")?;
+
+            let status = resp.status();
+            let text_body = resp.text().await.context("Failed to read embedding response")?;
+
+            if !status.is_success() {
+                return Err(anyhow!(
+                    "Embedding API error {}: {}",
+                    status,
+                    &text_body[..find_char_boundary(&text_body, 500)]
+                ));
+            }
+
+            // HF embedding API returns Vec<Vec<f32>> (one embedding per input)
+            let embeddings: Vec<Vec<f32>> = serde_json::from_str(&text_body)
+                .with_context(|| format!(
+                    "Failed to parse embedding response: {}",
+                    &text_body[..find_char_boundary(&text_body, 300)]
+                ))?;
+
+            embeddings
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("Empty embedding response"))
+        }
+        Provider::Ollama => {
+            let url = "http://localhost:11434/api/embed".to_string();
+            let body = OllamaEmbedRequest {
+                model: embedding_model.to_string(),
+                input: text.to_string(),
+            };
+
+            let resp = client.post(&url).headers(headers).json(&body).send().await
+                .context("Ollama embedding request failed")?;
+
+            let status = resp.status();
+            let text_body = resp.text().await.context("Failed to read Ollama embedding response")?;
+
+            if !status.is_success() {
+                return Err(anyhow!(
+                    "Ollama embedding error {}: {}",
+                    status,
+                    &text_body[..find_char_boundary(&text_body, 500)]
+                ));
+            }
+
+            let parsed: OllamaEmbedResponse = serde_json::from_str(&text_body)
+                .with_context(|| format!(
+                    "Failed to parse Ollama embedding response: {}",
+                    &text_body[..find_char_boundary(&text_body, 300)]
+                ))?;
+
+            parsed
+                .embeddings
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("Empty Ollama embedding response"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
