@@ -27,6 +27,8 @@ pub struct AppConfig {
     pub enable_rag: bool,
     pub rag_embedding_model: String,
     pub rag_chunk_size: usize,
+    pub use_streaming: bool,
+    pub sessions_dir: String,
 }
 
 impl Default for AppConfig {
@@ -53,6 +55,8 @@ impl Default for AppConfig {
             enable_rag: false,
             rag_embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             rag_chunk_size: 1024,
+            use_streaming: true,
+            sessions_dir: "sessions".to_string(),
         }
     }
 }
@@ -108,7 +112,10 @@ mod tests {
         assert!(!cfg.enable_dashboard);
         assert_eq!(cfg.dashboard_port, 3000);
         assert!(!cfg.enable_rag);
-        assert_eq!(cfg.rag_embedding_model, "sentence-transformers/all-MiniLM-L6-v2");
+        assert_eq!(
+            cfg.rag_embedding_model,
+            "sentence-transformers/all-MiniLM-L6-v2"
+        );
         assert_eq!(cfg.rag_chunk_size, 1024);
     }
 

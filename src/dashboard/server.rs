@@ -30,6 +30,11 @@ pub async fn start_dashboard(state: Arc<DashboardState>, port: u16) -> anyhow::R
         // Lint & Security
         .route("/api/lint", post(routes::lint_code))
         .route("/api/security", post(routes::security_check_code))
+        // Explain, Project, Session persistence
+        .route("/api/explain", post(routes::explain_code_endpoint))
+        .route("/api/generate/project", post(routes::generate_project))
+        .route("/api/sessions/saved", get(routes::list_saved_sessions))
+        .route("/api/sessions/save", post(routes::save_session_to_disk))
         // Session management
         .route("/api/sessions", get(routes::list_sessions))
         .route("/api/sessions", post(routes::create_session))

@@ -4,11 +4,11 @@ use dotenvy::dotenv;
 pub mod api;
 pub mod config;
 pub mod dashboard;
-pub mod python_exec;
 pub mod interface;
-pub mod utils;
 pub mod logger;
+pub mod python_exec;
 pub mod rag;
+pub mod utils;
 
 /// Run the application: load `.env`, load config, and start the REPL.
 ///

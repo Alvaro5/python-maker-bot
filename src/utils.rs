@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -96,19 +97,19 @@ fn is_just_markdown_text(text: &str) -> bool {
 
         // Markdown indicators (explicit parentheses for clarity)
         if trimmed.starts_with("###")
-           || trimmed.starts_with("##")
-           || (trimmed.starts_with("#") && !trimmed.contains("=") && !trimmed.contains("import"))
-           || trimmed.starts_with("Here is")
-           || trimmed.starts_with("Step ")
-           || trimmed.starts_with("The ")
-           || trimmed.contains("code for")
+            || trimmed.starts_with("##")
+            || (trimmed.starts_with("#") && !trimmed.contains("=") && !trimmed.contains("import"))
+            || trimmed.starts_with("Here is")
+            || trimmed.starts_with("Step ")
+            || trimmed.starts_with("The ")
+            || trimmed.contains("code for")
         {
             text_lines += 1;
         } else if trimmed.contains("def ")
-                  || trimmed.contains("class ")
-                  || trimmed.contains("import ")
-                  || trimmed.contains("=")
-                  || (trimmed.contains("(") && trimmed.contains(")"))
+            || trimmed.contains("class ")
+            || trimmed.contains("import ")
+            || trimmed.contains("=")
+            || (trimmed.contains("(") && trimmed.contains(")"))
         {
             code_lines += 1;
         }
@@ -126,10 +127,11 @@ fn clean_markdown_artifacts(text: &str) -> String {
         let trimmed = line.trim();
 
         // Skip obvious markdown headings and explanations
-        if trimmed.starts_with("###") ||
-           trimmed.starts_with("##") ||
-           (trimmed.starts_with("Here is") && trimmed.contains(":")) ||
-           (trimmed.starts_with("Step ") && trimmed.contains(":")) {
+        if trimmed.starts_with("###")
+            || trimmed.starts_with("##")
+            || (trimmed.starts_with("Here is") && trimmed.contains(":"))
+            || (trimmed.starts_with("Step ") && trimmed.contains(":"))
+        {
             continue;
         }
 
@@ -171,35 +173,285 @@ pub fn extract_imports(code: &str) -> Vec<String> {
 pub fn is_stdlib(package: &str) -> bool {
     // Common Python 3 standard library modules
     const STDLIB_MODULES: &[&str] = &[
-        "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio", "asyncore",
-        "atexit", "audioop", "base64", "bdb", "binascii", "binhex", "bisect", "builtins",
-        "bz2", "calendar", "cgi", "cgitb", "chunk", "cmath", "cmd", "code", "codecs",
-        "codeop", "collections", "colorsys", "compileall", "concurrent", "configparser",
-        "contextlib", "contextvars", "copy", "copyreg", "crypt", "csv", "ctypes", "curses",
-        "dataclasses", "datetime", "dbm", "decimal", "difflib", "dis", "distutils", "doctest",
-        "email", "encodings", "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput",
-        "fnmatch", "fractions", "ftplib", "functools", "gc", "getopt", "getpass", "gettext",
-        "glob", "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac", "html", "http", "idlelib",
-        "imaplib", "imghdr", "imp", "importlib", "inspect", "io", "ipaddress", "itertools",
-        "json", "keyword", "lib2to3", "linecache", "locale", "logging", "lzma", "mailbox",
-        "mailcap", "marshal", "math", "mimetypes", "mmap", "modulefinder", "msilib", "msvcrt",
-        "multiprocessing", "netrc", "nis", "nntplib", "numbers", "operator", "optparse", "os",
-        "ossaudiodev", "parser", "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
-        "platform", "plistlib", "poplib", "posix", "posixpath", "pprint", "profile", "pstats",
-        "pty", "pwd", "py_compile", "pyclbr", "pydoc", "queue", "quopri", "random", "re",
-        "readline", "reprlib", "resource", "rlcompleter", "runpy", "sched", "secrets", "select",
-        "selectors", "shelve", "shlex", "shutil", "signal", "site", "smtpd", "smtplib", "sndhdr",
-        "socket", "socketserver", "spwd", "sqlite3", "ssl", "stat", "statistics", "string",
-        "stringprep", "struct", "subprocess", "sunau", "symbol", "symtable", "sys", "sysconfig",
-        "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile", "termios", "test", "textwrap",
-        "threading", "time", "timeit", "tkinter", "token", "tokenize", "tomllib", "trace",
-        "traceback", "tracemalloc", "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
-        "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser",
-        "winreg", "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport",
-        "zlib", "_thread",
+        "abc",
+        "aifc",
+        "argparse",
+        "array",
+        "ast",
+        "asynchat",
+        "asyncio",
+        "asyncore",
+        "atexit",
+        "audioop",
+        "base64",
+        "bdb",
+        "binascii",
+        "binhex",
+        "bisect",
+        "builtins",
+        "bz2",
+        "calendar",
+        "cgi",
+        "cgitb",
+        "chunk",
+        "cmath",
+        "cmd",
+        "code",
+        "codecs",
+        "codeop",
+        "collections",
+        "colorsys",
+        "compileall",
+        "concurrent",
+        "configparser",
+        "contextlib",
+        "contextvars",
+        "copy",
+        "copyreg",
+        "crypt",
+        "csv",
+        "ctypes",
+        "curses",
+        "dataclasses",
+        "datetime",
+        "dbm",
+        "decimal",
+        "difflib",
+        "dis",
+        "distutils",
+        "doctest",
+        "email",
+        "encodings",
+        "enum",
+        "errno",
+        "faulthandler",
+        "fcntl",
+        "filecmp",
+        "fileinput",
+        "fnmatch",
+        "fractions",
+        "ftplib",
+        "functools",
+        "gc",
+        "getopt",
+        "getpass",
+        "gettext",
+        "glob",
+        "graphlib",
+        "grp",
+        "gzip",
+        "hashlib",
+        "heapq",
+        "hmac",
+        "html",
+        "http",
+        "idlelib",
+        "imaplib",
+        "imghdr",
+        "imp",
+        "importlib",
+        "inspect",
+        "io",
+        "ipaddress",
+        "itertools",
+        "json",
+        "keyword",
+        "lib2to3",
+        "linecache",
+        "locale",
+        "logging",
+        "lzma",
+        "mailbox",
+        "mailcap",
+        "marshal",
+        "math",
+        "mimetypes",
+        "mmap",
+        "modulefinder",
+        "msilib",
+        "msvcrt",
+        "multiprocessing",
+        "netrc",
+        "nis",
+        "nntplib",
+        "numbers",
+        "operator",
+        "optparse",
+        "os",
+        "ossaudiodev",
+        "parser",
+        "pathlib",
+        "pdb",
+        "pickle",
+        "pickletools",
+        "pipes",
+        "pkgutil",
+        "platform",
+        "plistlib",
+        "poplib",
+        "posix",
+        "posixpath",
+        "pprint",
+        "profile",
+        "pstats",
+        "pty",
+        "pwd",
+        "py_compile",
+        "pyclbr",
+        "pydoc",
+        "queue",
+        "quopri",
+        "random",
+        "re",
+        "readline",
+        "reprlib",
+        "resource",
+        "rlcompleter",
+        "runpy",
+        "sched",
+        "secrets",
+        "select",
+        "selectors",
+        "shelve",
+        "shlex",
+        "shutil",
+        "signal",
+        "site",
+        "smtpd",
+        "smtplib",
+        "sndhdr",
+        "socket",
+        "socketserver",
+        "spwd",
+        "sqlite3",
+        "ssl",
+        "stat",
+        "statistics",
+        "string",
+        "stringprep",
+        "struct",
+        "subprocess",
+        "sunau",
+        "symbol",
+        "symtable",
+        "sys",
+        "sysconfig",
+        "syslog",
+        "tabnanny",
+        "tarfile",
+        "telnetlib",
+        "tempfile",
+        "termios",
+        "test",
+        "textwrap",
+        "threading",
+        "time",
+        "timeit",
+        "tkinter",
+        "token",
+        "tokenize",
+        "tomllib",
+        "trace",
+        "traceback",
+        "tracemalloc",
+        "tty",
+        "turtle",
+        "turtledemo",
+        "types",
+        "typing",
+        "unicodedata",
+        "unittest",
+        "urllib",
+        "uu",
+        "uuid",
+        "venv",
+        "warnings",
+        "wave",
+        "weakref",
+        "webbrowser",
+        "winreg",
+        "winsound",
+        "wsgiref",
+        "xdrlib",
+        "xml",
+        "xmlrpc",
+        "zipapp",
+        "zipfile",
+        "zipimport",
+        "zlib",
+        "_thread",
     ];
 
     STDLIB_MODULES.contains(&package)
+}
+
+// ── Multi-file project blueprint ────────────────────────────────────────
+
+/// A single file in a generated project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectFile {
+    pub path: String,
+    pub content: String,
+}
+
+/// A complete project structure generated by the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectBlueprint {
+    pub project_name: String,
+    pub description: String,
+    pub files: Vec<ProjectFile>,
+}
+
+/// Regex to extract JSON from a ```json code fence.
+static JSON_BLOCK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"```\s*json\s*\n([\s\S]*?)\s*```").unwrap());
+
+/// Parse LLM response into a `ProjectBlueprint`.
+///
+/// Tries direct JSON parsing first, then falls back to extracting JSON from
+/// a markdown code fence. Validates that all file paths are safe (no `..`, no absolute paths).
+pub fn parse_project_blueprint(response: &str) -> Result<ProjectBlueprint> {
+    let json_str = if let Ok(bp) = serde_json::from_str::<ProjectBlueprint>(response.trim()) {
+        return validate_blueprint(bp);
+    } else if let Some(capture) = JSON_BLOCK_RE.captures(response) {
+        capture.get(1).map(|m| m.as_str().trim().to_string())
+    } else {
+        None
+    };
+
+    let json_str = json_str.ok_or_else(|| anyhow!(
+        "Could not find a valid JSON project blueprint in the LLM response. Expected a JSON object with project_name, description, and files array."
+    ))?;
+
+    let bp: ProjectBlueprint = serde_json::from_str(&json_str)
+        .with_context(|| "Failed to parse project blueprint JSON")?;
+
+    validate_blueprint(bp)
+}
+
+/// Validate that all file paths in the blueprint are safe.
+fn validate_blueprint(bp: ProjectBlueprint) -> Result<ProjectBlueprint> {
+    for file in &bp.files {
+        if file.path.contains("..") {
+            return Err(anyhow!(
+                "Unsafe path detected: '{}' contains '..'",
+                file.path
+            ));
+        }
+        if file.path.starts_with('/') {
+            return Err(anyhow!(
+                "Unsafe path detected: '{}' is an absolute path",
+                file.path
+            ));
+        }
+    }
+    if bp.project_name.is_empty() {
+        return Err(anyhow!("Project name is empty"));
+    }
+    if bp.files.is_empty() {
+        return Err(anyhow!("Project has no files"));
+    }
+    Ok(bp)
 }
 
 #[cfg(test)]
@@ -364,7 +616,7 @@ mod tests {
     #[test]
     fn test_find_char_boundary_multibyte() {
         let s = "Héllo wörld"; // é is 2 bytes, ö is 2 bytes
-        // 'H' = 1 byte, 'é' = 2 bytes (bytes 1..3)
+                               // 'H' = 1 byte, 'é' = 2 bytes (bytes 1..3)
         assert_eq!(find_char_boundary(s, 2), 1); // mid-'é', snaps back to 1
         assert_eq!(find_char_boundary(s, 3), 3); // after 'é'
     }
@@ -375,5 +627,55 @@ mod tests {
         // 'H'=0, 'i'=1, ' '=2, '👋'=3..7
         assert_eq!(find_char_boundary(s, 4), 3); // mid-emoji, snaps back
         assert_eq!(find_char_boundary(s, 7), 7); // after emoji
+    }
+
+    // ── Project blueprint tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_project_blueprint_direct_json() {
+        let json = r#"{
+            "project_name": "my_project",
+            "description": "A test project",
+            "files": [
+                {"path": "main.py", "content": "print('hello')"},
+                {"path": "requirements.txt", "content": "requests"}
+            ]
+        }"#;
+        let bp = parse_project_blueprint(json).unwrap();
+        assert_eq!(bp.project_name, "my_project");
+        assert_eq!(bp.files.len(), 2);
+        assert_eq!(bp.files[0].path, "main.py");
+    }
+
+    #[test]
+    fn test_parse_project_blueprint_from_code_fence() {
+        let response = "Here is your project:\n```json\n{\"project_name\": \"test\", \"description\": \"desc\", \"files\": [{\"path\": \"main.py\", \"content\": \"print(1)\"}]}\n```";
+        let bp = parse_project_blueprint(response).unwrap();
+        assert_eq!(bp.project_name, "test");
+        assert_eq!(bp.files.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_project_blueprint_rejects_dotdot() {
+        let json = r#"{"project_name": "evil", "description": "d", "files": [{"path": "../etc/passwd", "content": "bad"}]}"#;
+        assert!(parse_project_blueprint(json).is_err());
+    }
+
+    #[test]
+    fn test_parse_project_blueprint_rejects_absolute_path() {
+        let json = r#"{"project_name": "evil", "description": "d", "files": [{"path": "/etc/passwd", "content": "bad"}]}"#;
+        assert!(parse_project_blueprint(json).is_err());
+    }
+
+    #[test]
+    fn test_parse_project_blueprint_rejects_empty_name() {
+        let json = r#"{"project_name": "", "description": "d", "files": [{"path": "main.py", "content": "ok"}]}"#;
+        assert!(parse_project_blueprint(json).is_err());
+    }
+
+    #[test]
+    fn test_parse_project_blueprint_rejects_no_files() {
+        let json = r#"{"project_name": "empty", "description": "d", "files": []}"#;
+        assert!(parse_project_blueprint(json).is_err());
     }
 }

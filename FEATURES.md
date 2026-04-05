@@ -77,21 +77,15 @@ To make this stand out for a senior-year portfolio, consider moving from a "func
     - **Configuration**: `enable_dashboard = true` and `dashboard_port = 3000` in `pymakebot.toml`
     - New `/dashboard` REPL command shows the dashboard URL
 
-7. "Chat with Data" (Local RAG)
-    Currently, the bot generates code based only on LLM training data. Real-world AI systems augment generation with user-provided context.
+7. ~~"Chat with Data" (Local RAG)~~ ✅ **DONE**
+    ~~Currently, the bot generates code based only on LLM training data.~~
 
-    Feature: Allow users to load custom documentation (PDF, TXT, CSV) via a `/context <file_path>` command. The bot embeds these documents locally and injects relevant chunks into the LLM prompt when generating code.
-
-    Why it impresses recruiters: RAG (Retrieval-Augmented Generation) is the hottest topic in AI/ML. Building it from scratch demonstrates deep technical mastery and practical LLM knowledge.
-
-    Implementation Plan:
-    - **Ingestion**: Add a `/context <file_path>` REPL command that accepts local files (PDF, TXT, CSV).
-    - **Text Extraction**: Parse files into chunks (e.g., ~256 tokens per chunk) using existing dependencies or a lightweight library.
-    - **Embedding**: Use the `fastembed` crate to convert text chunks into vector embeddings locally (no API calls).
-    - **Storage**: Store embeddings in memory as a simple `Vec<(String, Vec<f32>)>` or use a lightweight vector DB like Qdrant for persistence.
-    - **Retrieval**: When the user asks a question, embed their query and retrieve the top 3 most similar chunks using cosine similarity.
-    - **Injection**: Prepend these chunks to the system prompt: `"Context: [Chunk 1] [Chunk 2] [Chunk 3]. Use this context to answer: [User Prompt]"`.
-    - **Configuration**: Add `enable_rag = true` option in `pymakebot.toml` to toggle RAG on/off.
+    Implemented in `src/rag.rs` with the `/context <file_path>` REPL command. Supports TXT, MD, and CSV files:
+    - **Text chunking** with configurable chunk size and 10% overlap
+    - **Embedding generation** via provider-specific APIs (HuggingFace, Ollama, OpenAI-compatible)
+    - **In-memory vector store** with cosine similarity retrieval
+    - **Automatic RAG injection** into prompts when `enable_rag = true`
+    - Configurable: `enable_rag`, `rag_embedding_model`, `rag_chunk_size` in `pymakebot.toml`
 
 8. Multi-File Project Generation (Scaffolding)
     Today, the bot returns single scripts. Professional engineering requires generating complete project structures.
@@ -123,6 +117,40 @@ To make this stand out for a senior-year portfolio, consider moving from a "func
     - **User Feedback**: Display the generated file tree and provide commands to open the folder or run the project.
 
 
+
+9. ~~GitHub Actions CI/CD Pipeline~~ ✅ **DONE**
+    Automated quality gates on every push and pull request:
+    - `cargo fmt --check` — formatting verification
+    - `cargo clippy -- -D warnings` — zero-warning lint policy
+    - `cargo test` — full test suite execution
+    - Uses Rust stable on ubuntu-latest with dependency caching
+
+10. ~~Code Explanation Mode~~ ✅ **DONE**
+    The bot can now explain generated code step-by-step via `/explain` REPL command and dashboard endpoint:
+    - Dedicated explanation system prompt for educational breakdowns
+    - Explains: overview, step-by-step walkthrough, key concepts, potential improvements
+    - Dashboard "Explain" button for one-click explanations
+
+11. ~~Conversation Persistence~~ ✅ **DONE**
+    Sessions can be saved and loaded across restarts:
+    - `/session save <name>` — serialize conversation history to JSON
+    - `/session load <name>` — restore a previous session
+    - `/session list` — browse saved sessions
+    - Dashboard endpoints for session persistence
+
+12. ~~Streaming LLM Responses~~ ✅ **DONE**
+    Real-time token-by-token code generation:
+    - REPL: characters appear as the model generates them
+    - Dashboard: Server-Sent Events (SSE) for live streaming
+    - Configurable via `use_streaming = true` in `pymakebot.toml`
+    - Graceful fallback to non-streaming on error
+
+13. ~~Multi-File Project Generation~~ ✅ **DONE**
+    Generate entire project structures, not just single scripts:
+    - `/project <prompt>` scaffolds a complete project directory
+    - LLM outputs structured JSON with file paths and contents
+    - Writes to `generated/<project_name>/` with proper directory structure
+    - Dashboard endpoint for project generation
 
 ## Possible Optimizations
 
