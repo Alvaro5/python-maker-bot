@@ -56,3 +56,4 @@ out/
 generated/
 logs/
 *.py
+CLAUDE.md
