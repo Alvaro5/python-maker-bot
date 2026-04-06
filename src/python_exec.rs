@@ -10,8 +10,7 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 /// Regex matching ruff rule codes that indicate errors (E/F rules).
-static LINT_ERROR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b[EF]\d{3,4}\b").unwrap());
+static LINT_ERROR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b[EF]\d{3,4}\b").unwrap());
 
 const DOCKER_IMAGE: &str = "python-sandbox";
 
@@ -131,10 +130,20 @@ impl CodeExecutor {
     /// `base_dir`: directory where generated scripts are stored.
     /// `use_docker`: if true, scripts run inside the `python-sandbox` Docker container.
     /// `use_venv`: if true, each execution runs inside a temporary Python virtual environment.
-    pub fn new(base_dir: &str, use_docker: bool, use_venv: bool, python_executable: &str) -> Result<Self> {
+    pub fn new(
+        base_dir: &str,
+        use_docker: bool,
+        use_venv: bool,
+        python_executable: &str,
+    ) -> Result<Self> {
         let dir = PathBuf::from(base_dir);
         ensure_dir(&dir)?;
-        Ok(Self { base_dir: dir, use_docker, use_venv, python_executable: python_executable.to_string() })
+        Ok(Self {
+            base_dir: dir,
+            use_docker,
+            use_venv,
+            python_executable: python_executable.to_string(),
+        })
     }
 
     /// Return a reference to the base directory where scripts are stored.
@@ -188,7 +197,8 @@ impl CodeExecutor {
         if !inspect.success() {
             return Err(anyhow::anyhow!(
                 "Docker image '{}' not found. Build it with: docker build -t {} .",
-                DOCKER_IMAGE, DOCKER_IMAGE
+                DOCKER_IMAGE,
+                DOCKER_IMAGE
             ));
         }
 
@@ -206,8 +216,7 @@ impl CodeExecutor {
             .spawn()
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(timeout_secs);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
         loop {
             match child.try_wait() {
@@ -270,7 +279,11 @@ impl CodeExecutor {
                 }
                 Ok(out) => {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    last_err = Some(anyhow::anyhow!("venv creation failed with {}: {}", cmd, stderr));
+                    last_err = Some(anyhow::anyhow!(
+                        "venv creation failed with {}: {}",
+                        cmd,
+                        stderr
+                    ));
                 }
                 Err(e) => {
                     last_err = Some(anyhow::anyhow!("Failed to run {} -m venv: {}", cmd, e));
@@ -311,7 +324,11 @@ impl CodeExecutor {
         if venv_path.exists() {
             match fs::remove_dir_all(venv_path) {
                 Ok(()) => println!("✓ Virtual environment cleaned up"),
-                Err(e) => eprintln!("Warning: failed to remove venv at {}: {}", venv_path.display(), e),
+                Err(e) => eprintln!(
+                    "Warning: failed to remove venv at {}: {}",
+                    venv_path.display(),
+                    e
+                ),
             }
         }
     }
@@ -324,15 +341,21 @@ impl CodeExecutor {
     /// * Host mode with venv: installs into the provided venv.
     /// * Docker mode without venv: commits packages into the Docker image.
     /// * Docker mode with venv: no-op — deps are installed inline at execution time.
-    pub fn install_packages(&self, packages: &[String], venv: Option<&std::path::Path>) -> Result<()> {
+    pub fn install_packages(
+        &self,
+        packages: &[String],
+        venv: Option<&std::path::Path>,
+    ) -> Result<()> {
         if packages.is_empty() {
             return Ok(());
         }
 
         // Docker+venv: deps will be installed inside the container at execution time
         if self.use_docker && self.use_venv {
-            println!("ℹ  Dependencies ({}) will be installed in a container venv at execution time",
-                packages.join(", "));
+            println!(
+                "ℹ  Dependencies ({}) will be installed in a container venv at execution time",
+                packages.join(", ")
+            );
             return Ok(());
         }
 
@@ -350,7 +373,11 @@ impl CodeExecutor {
     }
 
     /// Install packages into a host-side virtual environment.
-    fn install_packages_venv(&self, venv_path: &std::path::Path, packages: &[String]) -> Result<()> {
+    fn install_packages_venv(
+        &self,
+        venv_path: &std::path::Path,
+        packages: &[String],
+    ) -> Result<()> {
         let pip = Self::venv_pip(venv_path);
         let mut args = vec!["install".to_string(), "--quiet".to_string()];
         args.extend(packages.iter().cloned());
@@ -388,25 +415,17 @@ impl CodeExecutor {
                         return Ok(());
                     } else {
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        last_err = Some(anyhow::anyhow!(
-                            "pip install failed: {}",
-                            stderr
-                        ));
+                        last_err = Some(anyhow::anyhow!("pip install failed: {}", stderr));
                     }
                 }
                 Err(e) => {
-                    last_err = Some(anyhow::anyhow!(
-                        "Failed to run pip with {}: {}",
-                        cmd,
-                        e
-                    ));
+                    last_err = Some(anyhow::anyhow!("Failed to run pip with {}: {}", cmd, e));
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!("Could not install packages with python/python3")
-        }))
+        Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("Could not install packages with python/python3")))
     }
 
     /// Install packages inside the Docker sandbox image (no venv).
@@ -420,7 +439,7 @@ impl CodeExecutor {
             "--name".to_string(),
             container_name.clone(),
             "--user".to_string(),
-            "root".to_string(),  // need root to pip install
+            "root".to_string(), // need root to pip install
             DOCKER_IMAGE.to_string(),
             "pip".to_string(),
             "install".to_string(),
@@ -450,7 +469,10 @@ impl CodeExecutor {
                 Ok(())
             } else {
                 let stderr = String::from_utf8_lossy(&commit.stderr);
-                Err(anyhow::anyhow!("Failed to commit Docker image after pip install: {}", stderr))
+                Err(anyhow::anyhow!(
+                    "Failed to commit Docker image after pip install: {}",
+                    stderr
+                ))
             }
         } else {
             // Clean up the failed container
@@ -459,7 +481,10 @@ impl CodeExecutor {
                 .output();
 
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow::anyhow!("pip install failed inside Docker: {}", stderr))
+            Err(anyhow::anyhow!(
+                "pip install failed inside Docker: {}",
+                stderr
+            ))
         }
     }
 
@@ -477,7 +502,9 @@ impl CodeExecutor {
             "matplotlib",
         ];
 
-        interactive_keywords.iter().any(|keyword| code.contains(keyword))
+        interactive_keywords
+            .iter()
+            .any(|keyword| code.contains(keyword))
     }
 
     /// Write a Python script to disk, returning the path.
@@ -541,7 +568,9 @@ impl CodeExecutor {
             })
             .collect();
 
-        let has_errors = diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
+        let has_errors = diagnostics
+            .iter()
+            .any(|d| d.severity == LintSeverity::Error);
 
         // Capture the "Found N ..." summary line if present
         let summary = stdout
@@ -595,14 +624,25 @@ impl CodeExecutor {
 
         // bandit exits 0 = clean, 1 = issues found
         let diagnostics = Self::parse_bandit_json(&stdout);
-        let has_high_severity = diagnostics.iter().any(|d| d.severity == SecuritySeverity::High);
+        let has_high_severity = diagnostics
+            .iter()
+            .any(|d| d.severity == SecuritySeverity::High);
         let count = diagnostics.len();
         let summary = if count == 0 {
             String::new()
         } else {
-            let high = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::High).count();
-            let med = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Medium).count();
-            let low = diagnostics.iter().filter(|d| d.severity == SecuritySeverity::Low).count();
+            let high = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::High)
+                .count();
+            let med = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::Medium)
+                .count();
+            let low = diagnostics
+                .iter()
+                .filter(|d| d.severity == SecuritySeverity::Low)
+                .count();
             format!(
                 "Found {} issue(s): {} high, {} medium, {} low severity",
                 count, high, med, low
@@ -698,7 +738,11 @@ impl CodeExecutor {
     }
 
     /// Write and execute a Python script with the specified execution mode.
-    pub fn write_and_run_with_mode(&self, code: &str, mode: ExecutionMode) -> Result<CodeExecutionResult> {
+    pub fn write_and_run_with_mode(
+        &self,
+        code: &str,
+        mode: ExecutionMode,
+    ) -> Result<CodeExecutionResult> {
         let script_path = self.write_script(code)?;
         self.execute_script(&script_path, mode, 0, None, &[]) // 0 = no timeout
     }
@@ -802,11 +846,7 @@ impl CodeExecutor {
         match mode {
             ExecutionMode::Interactive => {
                 let mut cmd = Command::new("docker");
-                cmd.args([
-                    "run", "--rm",
-                    "-i",
-                    "-v", &volume_mount,
-                ]);
+                cmd.args(["run", "--rm", "-i", "-v", &volume_mount]);
                 if !needs_network {
                     cmd.args(["--network", "none"]);
                 }
@@ -826,7 +866,8 @@ impl CodeExecutor {
 
                 match child {
                     Ok(mut process) => {
-                        let status = process.wait()
+                        let status = process
+                            .wait()
                             .context("Failed to wait for Docker process")?;
                         Ok(CodeExecutionResult {
                             script_path: script_path.to_path_buf(),
@@ -835,15 +876,15 @@ impl CodeExecutor {
                             exit_code: status.code(),
                         })
                     }
-                    Err(e) => Err(anyhow::anyhow!("Failed to spawn Docker interactive process: {}", e)),
+                    Err(e) => Err(anyhow::anyhow!(
+                        "Failed to spawn Docker interactive process: {}",
+                        e
+                    )),
                 }
             }
             ExecutionMode::Captured => {
                 let mut cmd = Command::new("docker");
-                cmd.args([
-                    "run", "--rm",
-                    "-v", &volume_mount,
-                ]);
+                cmd.args(["run", "--rm", "-v", &volume_mount]);
                 if !needs_network {
                     cmd.args(["--network", "none"]);
                 }
@@ -854,16 +895,14 @@ impl CodeExecutor {
                     cmd.args([DOCKER_IMAGE, "python3", &script_in_container]);
                 }
 
-                let child = cmd
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn();
+                let child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
 
                 match child {
                     Ok(mut process) => {
                         if timeout_secs > 0 {
                             let timeout = Duration::from_secs(timeout_secs);
-                            match process.wait_timeout(timeout)
+                            match process
+                                .wait_timeout(timeout)
                                 .context("Failed to wait for Docker process")?
                             {
                                 Some(status) => {
@@ -892,7 +931,8 @@ impl CodeExecutor {
                                 }
                             }
                         } else {
-                            let output = process.wait_with_output()
+                            let output = process
+                                .wait_with_output()
                                 .context("Failed to wait for Docker process")?;
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -922,7 +962,8 @@ impl CodeExecutor {
         // If a venv is available, use its python directly (no fallback needed)
         if let Some(venv_path) = venv {
             let python = Self::venv_python(venv_path);
-            let python_str = python.to_str()
+            let python_str = python
+                .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Venv python path is not valid UTF-8"))?;
             return self.execute_with_interpreter(python_str, script_path, mode, timeout_secs);
         }
@@ -945,12 +986,15 @@ impl CodeExecutor {
 
                     match child {
                         Ok(mut process) => {
-                            let status = process.wait()
-                                .with_context(|| format!("Failed to wait for process with {}", cmd))?;
+                            let status = process.wait().with_context(|| {
+                                format!("Failed to wait for process with {}", cmd)
+                            })?;
 
                             return Ok(CodeExecutionResult {
                                 script_path: script_path.to_path_buf(),
-                                stdout: String::from("[Interactive mode - output displayed directly]"),
+                                stdout: String::from(
+                                    "[Interactive mode - output displayed directly]",
+                                ),
                                 stderr: String::new(),
                                 exit_code: status.code(),
                             });
@@ -973,9 +1017,9 @@ impl CodeExecutor {
                         Ok(mut process) => {
                             if timeout_secs > 0 {
                                 let timeout = Duration::from_secs(timeout_secs);
-                                match process.wait_timeout(timeout)
-                                    .with_context(|| format!("Failed to wait for process with {}", cmd))?
-                                {
+                                match process.wait_timeout(timeout).with_context(|| {
+                                    format!("Failed to wait for process with {}", cmd)
+                                })? {
                                     Some(status) => {
                                         let stdout = read_pipe(process.stdout.take());
                                         let stderr = read_pipe(process.stderr.take());
@@ -1004,8 +1048,9 @@ impl CodeExecutor {
                                 }
                             } else {
                                 // No timeout — blocking wait
-                                let output = process.wait_with_output()
-                                    .with_context(|| format!("Failed to wait for process with {}", cmd))?;
+                                let output = process.wait_with_output().with_context(|| {
+                                    format!("Failed to wait for process with {}", cmd)
+                                })?;
                                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                                 return Ok(CodeExecutionResult {
@@ -1017,18 +1062,15 @@ impl CodeExecutor {
                             }
                         }
                         Err(e) => {
-                            last_err = Some(anyhow::anyhow!(
-                                "Failed with command `{cmd}`: {e}"
-                            ));
+                            last_err = Some(anyhow::anyhow!("Failed with command `{cmd}`: {e}"));
                         }
                     }
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!(
-            "Could not execute the script with python/python3"
-        )))
+        Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("Could not execute the script with python/python3")))
     }
 
     /// Execute a script with a specific interpreter (used for venv python path).
@@ -1049,7 +1091,8 @@ impl CodeExecutor {
                     .spawn()
                     .with_context(|| format!("Failed to spawn venv python: {}", interpreter))?;
 
-                let status = child.wait_with_output()
+                let status = child
+                    .wait_with_output()
                     .context("Failed to wait for venv process")?;
                 Ok(CodeExecutionResult {
                     script_path: script_path.to_path_buf(),
@@ -1068,7 +1111,8 @@ impl CodeExecutor {
 
                 if timeout_secs > 0 {
                     let timeout = Duration::from_secs(timeout_secs);
-                    match process.wait_timeout(timeout)
+                    match process
+                        .wait_timeout(timeout)
                         .context("Failed to wait for venv process")?
                     {
                         Some(status) => {
@@ -1097,7 +1141,8 @@ impl CodeExecutor {
                         }
                     }
                 } else {
-                    let output = process.wait_with_output()
+                    let output = process
+                        .wait_with_output()
                         .context("Failed to wait for venv process")?;
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1161,9 +1206,7 @@ impl CodeExecutor {
         let needs_network = self.use_venv && !deps.is_empty();
 
         let venv_shell_cmd = if self.use_venv {
-            let mut parts = vec![
-                "python3 -m venv --system-site-packages /tmp/venv".to_string(),
-            ];
+            let mut parts = vec!["python3 -m venv --system-site-packages /tmp/venv".to_string()];
             if !deps.is_empty() {
                 parts.push(format!(
                     "/tmp/venv/bin/pip install --quiet {}",
@@ -1203,7 +1246,8 @@ impl CodeExecutor {
         // Choose the Python interpreter
         let interpreter: String = if let Some(venv_path) = venv {
             let python = Self::venv_python(venv_path);
-            python.to_str()
+            python
+                .to_str()
                 .ok_or_else(|| anyhow::anyhow!("Venv python path is not valid UTF-8"))?
                 .to_string()
         } else {
@@ -1237,6 +1281,31 @@ fn read_pipe<R: std::io::Read>(pipe: Option<R>) -> String {
         }
         None => String::new(),
     }
+}
+
+/// Scaffold a multi-file project from a `ProjectBlueprint`.
+///
+/// Creates `{base_dir}/{project_name}/` and writes all files, creating
+/// intermediate directories as needed. Returns the project directory path.
+pub fn scaffold_project(
+    blueprint: &crate::utils::ProjectBlueprint,
+    base_dir: &str,
+) -> Result<PathBuf> {
+    let project_dir = PathBuf::from(base_dir).join(&blueprint.project_name);
+    fs::create_dir_all(&project_dir)
+        .with_context(|| format!("Failed to create project directory {:?}", project_dir))?;
+
+    for file in &blueprint.files {
+        let file_path = project_dir.join(&file.path);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+        fs::write(&file_path, &file.content)
+            .with_context(|| format!("Failed to write file {:?}", file_path))?;
+    }
+
+    Ok(project_dir)
 }
 
 #[cfg(test)]
@@ -1466,8 +1535,12 @@ mod tests {
     #[test]
     fn test_execution_timeout() {
         let executor = host_executor("test_timeout_dir");
-        let path = executor.write_script("import time\ntime.sleep(10)").unwrap();
-        let result = executor.execute_script(&path, ExecutionMode::Captured, 2, None, &[]).unwrap();
+        let path = executor
+            .write_script("import time\ntime.sleep(10)")
+            .unwrap();
+        let result = executor
+            .execute_script(&path, ExecutionMode::Captured, 2, None, &[])
+            .unwrap();
         assert!(!result.is_success());
         assert!(result.stderr.contains("timed out"));
         let _ = fs::remove_dir_all("test_timeout_dir");
@@ -1511,7 +1584,11 @@ mod tests {
         assert!(venv_path.exists());
         // Check the venv has a python3 binary
         let python = CodeExecutor::venv_python(&venv_path);
-        assert!(python.exists(), "venv python not found at {:?} (checked python3 and python)", python);
+        assert!(
+            python.exists(),
+            "venv python not found at {:?} (checked python3 and python)",
+            python
+        );
         // Clean up
         executor.cleanup_venv(&venv_path);
         assert!(!venv_path.exists());
@@ -1527,8 +1604,12 @@ mod tests {
         let venv = executor.create_venv().unwrap();
         assert!(venv.is_some());
         let venv_path = venv.as_deref().unwrap();
-        let path = executor.write_script("import sys; print(sys.prefix)").unwrap();
-        let result = executor.execute_script(&path, ExecutionMode::Captured, 5, Some(venv_path), &[]).unwrap();
+        let path = executor
+            .write_script("import sys; print(sys.prefix)")
+            .unwrap();
+        let result = executor
+            .execute_script(&path, ExecutionMode::Captured, 5, Some(venv_path), &[])
+            .unwrap();
         assert!(result.is_success());
         // The output should mention the venv path
         assert!(!result.stdout.trim().is_empty());
@@ -1576,13 +1657,22 @@ mod tests {
         let temp_dir = "test_lint_issues";
         let executor = host_executor(temp_dir);
         // Import os but never use it — ruff should flag F401 (unused import)
-        let path = executor.write_script("import os\nprint('hello')\n").unwrap();
+        let path = executor
+            .write_script("import os\nprint('hello')\n")
+            .unwrap();
         let result = executor.lint_check(&path).unwrap();
         assert!(!result.passed, "Expected lint issues for unused import");
         assert!(!result.diagnostics.is_empty());
         // Check that at least one diagnostic mentions F401 or the unused import
-        let has_unused = result.diagnostics.iter().any(|d| d.message.contains("F401") || d.message.contains("unused"));
-        assert!(has_unused, "Expected F401 unused import diagnostic, got: {:?}", result.diagnostics);
+        let has_unused = result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("F401") || d.message.contains("unused"));
+        assert!(
+            has_unused,
+            "Expected F401 unused import diagnostic, got: {:?}",
+            result.diagnostics
+        );
         let _ = fs::remove_dir_all(temp_dir);
     }
 
@@ -1594,10 +1684,15 @@ mod tests {
         let temp_dir = "test_lint_severity";
         let executor = host_executor(temp_dir);
         // Undefined name (F821) is an error-level diagnostic
-        let path = executor.write_script("print(undefined_variable)\n").unwrap();
+        let path = executor
+            .write_script("print(undefined_variable)\n")
+            .unwrap();
         let result = executor.lint_check(&path).unwrap();
         assert!(result.has_errors, "Expected lint errors for undefined name");
-        let has_f_error = result.diagnostics.iter().any(|d| d.severity == LintSeverity::Error);
+        let has_f_error = result
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == LintSeverity::Error);
         assert!(has_f_error);
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -1609,11 +1704,16 @@ mod tests {
         }
         let temp_dir = "test_lint_summary";
         let executor = host_executor(temp_dir);
-        let path = executor.write_script("import os\nimport sys\nprint('hello')\n").unwrap();
+        let path = executor
+            .write_script("import os\nimport sys\nprint('hello')\n")
+            .unwrap();
         let result = executor.lint_check(&path).unwrap();
         if !result.passed {
             // ruff prints "Found N error(s)." summary
-            assert!(!result.summary.is_empty(), "Expected a summary line from ruff");
+            assert!(
+                !result.summary.is_empty(),
+                "Expected a summary line from ruff"
+            );
         }
         let _ = fs::remove_dir_all(temp_dir);
     }
@@ -1651,13 +1751,21 @@ mod tests {
         let code = "import subprocess\nsubprocess.call('ls', shell=True)\n";
         let path = executor.write_script(code).unwrap();
         let result = executor.security_check(&path).unwrap();
-        assert!(!result.passed, "Expected security issues for shell=True subprocess");
+        assert!(
+            !result.passed,
+            "Expected security issues for shell=True subprocess"
+        );
         assert!(!result.diagnostics.is_empty());
         // Check that at least one diagnostic mentions shell or subprocess
-        let has_relevant = result.diagnostics.iter().any(|d|
-            d.test_id.starts_with("B") || d.message.contains("shell")
+        let has_relevant = result
+            .diagnostics
+            .iter()
+            .any(|d| d.test_id.starts_with("B") || d.message.contains("shell"));
+        assert!(
+            has_relevant,
+            "Expected bandit finding, got: {:?}",
+            result.diagnostics
         );
-        assert!(has_relevant, "Expected bandit finding, got: {:?}", result.diagnostics);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
@@ -1692,7 +1800,10 @@ mod tests {
         let result = executor.security_check(&path).unwrap();
         if !result.passed {
             assert!(!result.summary.is_empty(), "Expected a summary string");
-            assert!(result.summary.contains("issue"), "Summary should mention issue count");
+            assert!(
+                result.summary.contains("issue"),
+                "Summary should mention issue count"
+            );
         }
         let _ = fs::remove_dir_all(temp_dir);
     }

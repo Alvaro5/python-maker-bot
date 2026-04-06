@@ -43,13 +43,27 @@ impl SessionMetrics {
 
     pub fn display(&self) {
         use colored::Colorize;
-        println!("\n{}", "━━━━━━━━━ Session Statistics ━━━━━━━━━".bright_cyan().bold());
+        println!(
+            "\n{}",
+            "━━━━━━━━━ Session Statistics ━━━━━━━━━"
+                .bright_cyan()
+                .bold()
+        );
         println!("Total requests: {}", self.total_requests);
-        println!("Successful executions: {}", self.successful_executions.to_string().green());
-        println!("Failed executions: {}", self.failed_executions.to_string().red());
+        println!(
+            "Successful executions: {}",
+            self.successful_executions.to_string().green()
+        );
+        println!(
+            "Failed executions: {}",
+            self.failed_executions.to_string().red()
+        );
         println!("API errors: {}", self.api_errors.to_string().yellow());
         println!("Success rate: {:.1}%", self.success_rate());
-        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_cyan());
+        println!(
+            "{}",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_cyan()
+        );
     }
 }
 
@@ -151,11 +165,11 @@ mod tests {
         let test_log_dir = "test_logs_temp";
         let logger = Logger::new(test_log_dir);
         assert!(logger.is_ok());
-        
+
         let logger = logger.unwrap();
         // Check that the parent directory exists
         assert!(logger.log_file.parent().unwrap().exists());
-        
+
         // Clean up
         let _ = fs::remove_dir_all(test_log_dir);
     }
@@ -164,14 +178,14 @@ mod tests {
     fn test_logger_basic_log() {
         let test_log_dir = "test_logs_temp2";
         let logger = Logger::new(test_log_dir).unwrap();
-        
+
         let result = logger.log("Test message");
         assert!(result.is_ok());
-        
+
         // Verify log file has content
         let content = fs::read_to_string(&logger.log_file).unwrap();
         assert!(content.contains("Test message"));
-        
+
         // Clean up
         let _ = fs::remove_dir_all(test_log_dir);
     }
@@ -180,14 +194,14 @@ mod tests {
     fn test_logger_api_request() {
         let test_log_dir = "test_logs_temp3";
         let logger = Logger::new(test_log_dir).unwrap();
-        
+
         let result = logger.log_api_request("Create a hello world script");
         assert!(result.is_ok());
-        
+
         let content = fs::read_to_string(&logger.log_file).unwrap();
         assert!(content.contains("API REQUEST"));
         assert!(content.contains("hello world"));
-        
+
         // Clean up
         let _ = fs::remove_dir_all(test_log_dir);
     }
@@ -196,16 +210,16 @@ mod tests {
     fn test_logger_multiple_entries() {
         let test_log_dir = "test_logs_temp4";
         let logger = Logger::new(test_log_dir).unwrap();
-        
+
         let _ = logger.log("Entry 1");
         let _ = logger.log("Entry 2");
         let _ = logger.log("Entry 3");
-        
+
         let content = fs::read_to_string(&logger.log_file).unwrap();
         assert!(content.contains("Entry 1"));
         assert!(content.contains("Entry 2"));
         assert!(content.contains("Entry 3"));
-        
+
         // Clean up
         let _ = fs::remove_dir_all(test_log_dir);
     }

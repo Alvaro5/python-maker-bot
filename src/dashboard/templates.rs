@@ -1,8 +1,8 @@
 use askama::Template;
 
-use crate::logger::SessionMetrics;
 use super::routes::{ChatMessageView, ContainerInfo, SessionListEntry};
 use super::state::{RuntimeSettings, ScriptEntry};
+use crate::logger::SessionMetrics;
 
 // ── Askama Templates ─────────────────────────────────────────────────
 

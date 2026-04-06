@@ -34,8 +34,7 @@ impl RagStore {
 
         for chunk in &chunks {
             let embedding =
-                crate::api::generate_embeddings(chunk, &config.rag_embedding_model, config)
-                    .await?;
+                crate::api::generate_embeddings(chunk, &config.rag_embedding_model, config).await?;
             self.entries.push((chunk.clone(), embedding));
         }
 
@@ -43,12 +42,7 @@ impl RagStore {
     }
 
     /// Embed a query and return the top-n most similar chunks.
-    pub async fn retrieve(
-        &self,
-        query: &str,
-        n: usize,
-        config: &AppConfig,
-    ) -> Result<Vec<String>> {
+    pub async fn retrieve(&self, query: &str, n: usize, config: &AppConfig) -> Result<Vec<String>> {
         if self.entries.is_empty() {
             return Ok(Vec::new());
         }
@@ -63,7 +57,11 @@ impl RagStore {
             .collect();
 
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(scored.into_iter().take(n).map(|(_, t)| t.to_string()).collect())
+        Ok(scored
+            .into_iter()
+            .take(n)
+            .map(|(_, t)| t.to_string())
+            .collect())
     }
 }
 

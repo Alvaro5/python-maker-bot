@@ -1,25 +1,40 @@
-use std::io::{self, Write};
-use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use crate::api::{self, Message, Provider};
 use crate::config::AppConfig;
 use crate::dashboard::state::{DashboardState, ExecutionEvent};
-use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity, SecuritySeverity};
-use crate::utils::{extract_python_code, find_char_boundary};
 use crate::logger::{Logger, SessionMetrics};
+use crate::python_exec::{CodeExecutor, ExecutionMode, LintSeverity, SecuritySeverity};
 use crate::rag::{self, RagStore};
+use crate::utils::{extract_python_code, find_char_boundary};
 use colored::*;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
-use rustyline::{Config, CompletionType, Context, Editor, Helper, Highlighter, Validator};
+use rustyline::{CompletionType, Config, Context, Editor, Helper, Highlighter, Validator};
+use std::fs;
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Available slash commands for tab-completion.
 const COMMANDS: &[&str] = &[
-    "/help", "/quit", "/exit", "/clear", "/refine",
-    "/save", "/history", "/stats", "/list", "/run", "/provider", "/lint", "/security", "/dashboard",
+    "/help",
+    "/quit",
+    "/exit",
+    "/clear",
+    "/refine",
+    "/save",
+    "/history",
+    "/stats",
+    "/list",
+    "/run",
+    "/provider",
+    "/lint",
+    "/security",
+    "/dashboard",
     "/context",
+    "/explain",
+    "/project",
+    "/session",
 ];
 
 /// Rustyline helper providing slash-command tab-completion and inline hints.
@@ -75,7 +90,7 @@ impl Completer for CommandCompleter {
 pub fn print_banner() {
     // Clear screen first
     print!("\x1B[2J\x1B[1;1H");
-    
+
     let art = r#"
    ██████╗ ██╗   ██╗████████╗██╗  ██╗ ██████╗ ███╗   ██╗
    ██╔══██╗╚██╗ ██╔╝╚══██╔══╝██║  ██║██╔═══██╗████╗  ██║
@@ -85,9 +100,16 @@ pub fn print_banner() {
    ╚═╝        ╚═╝      ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
     "#;
     println!("{}", art.bright_cyan().bold());
-    println!("    {}", "MAKER BOT v0.3.0 — AI Code Generator".bright_white());
+    println!(
+        "    {}",
+        "MAKER BOT v0.4.0 — AI Code Generator".bright_white()
+    );
     println!();
-    println!("    {} Type {} for command list", "ℹ".cyan(), "/help".bold().white());
+    println!(
+        "    {} Type {} for command list",
+        "ℹ".cyan(),
+        "/help".bold().white()
+    );
     println!("    {} Type {} to quit", "ℹ".cyan(), "/quit".bold().white());
     println!();
 }
@@ -118,7 +140,7 @@ pub fn display_code(code: &str) {
     println!("\n{}", border);
     println!("  {}", "Generated Python Code".bright_cyan().bold());
     println!("{}", border);
-    
+
     // Simple syntax highlighting for Python
     for (i, line) in code.lines().enumerate() {
         let line_num = format!("{:3} │", i + 1).bright_black();
@@ -164,7 +186,11 @@ fn start_spinner(message: &str) -> Arc<AtomicBool> {
         let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let mut i = 0;
         while running_clone.load(Ordering::Relaxed) {
-            print!("\r{} {} ", frames[i % frames.len()].to_string().cyan(), msg.dimmed());
+            print!(
+                "\r{} {} ",
+                frames[i % frames.len()].to_string().cyan(),
+                msg.dimmed()
+            );
             let _ = io::stdout().flush();
             std::thread::sleep(std::time::Duration::from_millis(80));
             i += 1;
@@ -208,7 +234,12 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
         }
     };
     match provider.resolve_api_url(&config.api_url) {
-        Ok(url) => println!("{} {} → {}", "✔ Provider:".green(), provider.display_name().bright_white(), url.dimmed()),
+        Ok(url) => println!(
+            "{} {} → {}",
+            "✔ Provider:".green(),
+            provider.display_name().bright_white(),
+            url.dimmed()
+        ),
         Err(e) => {
             println!("{} {}", "✖ Provider configuration error:".red().bold(), e);
             return None;
@@ -216,7 +247,11 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
     }
 
     if config.use_venv {
-        println!("{} {}", "✔".green(), "Virtual environment isolation enabled.".white());
+        println!(
+            "{} {}",
+            "✔".green(),
+            "Virtual environment isolation enabled.".white()
+        );
     }
 
     // Check linter availability
@@ -225,7 +260,10 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
             println!("{} {}", "✔".green(), "Linting enabled (ruff).".white());
             true
         } else {
-            println!("{} Linting enabled but ruff not found. Install with: pip install ruff", "⚠".yellow());
+            println!(
+                "{} Linting enabled but ruff not found. Install with: pip install ruff",
+                "⚠".yellow()
+            );
             println!("  {} Linting will be skipped.", "ℹ".blue());
             false
         }
@@ -236,7 +274,11 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
     // Check security scanner (bandit) availability
     let security_scanner_available = if config.use_security_check {
         if CodeExecutor::check_security_scanner_available() {
-            println!("{} {}", "✔".green(), "Security scanning enabled (bandit).".white());
+            println!(
+                "{} {}",
+                "✔".green(),
+                "Security scanning enabled (bandit).".white()
+            );
             true
         } else {
             println!("{} Security scanning enabled but bandit not found. Install with: pip install bandit", "⚠".yellow());
@@ -261,7 +303,10 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
                 print!("\r\x1b[2K");
                 println!("{} {}", "✖ Docker sandbox not available:".red().bold(), e);
                 println!("  {} Falling back to host execution.", "⚠".yellow());
-                println!("  {} To enable Docker, run: docker build -t python-sandbox .", "ℹ".blue());
+                println!(
+                    "  {} To enable Docker, run: docker build -t python-sandbox .",
+                    "ℹ".blue()
+                );
                 false
             }
         }
@@ -269,8 +314,13 @@ fn init_repl_context(config: &AppConfig) -> Option<ReplContext> {
         false
     };
 
-    let executor = CodeExecutor::new(&config.generated_dir, use_docker, config.use_venv, &config.python_executable)
-        .expect("Failed to create generated scripts directory");
+    let executor = CodeExecutor::new(
+        &config.generated_dir,
+        use_docker,
+        config.use_venv,
+        &config.python_executable,
+    )
+    .expect("Failed to create generated scripts directory");
     let logger = Logger::new(&config.log_dir).expect("Failed to create logger");
     let metrics = SessionMetrics::new();
 
@@ -297,7 +347,16 @@ pub async fn start_repl(config: &AppConfig) {
         None => return,
     };
 
-    start_repl_loop(config, ctx.executor, ctx.logger, ctx.metrics, ctx.linter_available, ctx.security_scanner_available, None).await;
+    start_repl_loop(
+        config,
+        ctx.executor,
+        ctx.logger,
+        ctx.metrics,
+        ctx.linter_available,
+        ctx.security_scanner_available,
+        None,
+    )
+    .await;
 }
 
 /// Start the REPL with the web dashboard running in the background.
@@ -318,8 +377,12 @@ pub async fn start_repl_with_dashboard(config: &AppConfig) {
 
     // Create a second executor for the dashboard's REST API
     let dashboard_executor = CodeExecutor::new(
-        &config.generated_dir, ctx.use_docker, config.use_venv, &config.python_executable
-    ).expect("Failed to create generated scripts directory");
+        &config.generated_dir,
+        ctx.use_docker,
+        config.use_venv,
+        &config.python_executable,
+    )
+    .expect("Failed to create generated scripts directory");
 
     // Create shared dashboard state and spawn the web server
     let state = DashboardState::new(config.clone(), dashboard_executor);
@@ -332,11 +395,24 @@ pub async fn start_repl_with_dashboard(config: &AppConfig) {
         }
     });
 
-    println!("{} {}",
+    println!(
+        "{} {}",
         "✓ Dashboard running at:".green(),
-        format!("http://localhost:{}", dashboard_port).bright_white().underline());
+        format!("http://localhost:{}", dashboard_port)
+            .bright_white()
+            .underline()
+    );
 
-    start_repl_loop(config, ctx.executor, ctx.logger, ctx.metrics, ctx.linter_available, ctx.security_scanner_available, Some(state)).await;
+    start_repl_loop(
+        config,
+        ctx.executor,
+        ctx.logger,
+        ctx.metrics,
+        ctx.linter_available,
+        ctx.security_scanner_available,
+        Some(state),
+    )
+    .await;
 }
 
 async fn start_repl_loop(
@@ -367,7 +443,12 @@ async fn start_repl_loop(
 
     loop {
         // Two-line prompt for better visibility
-        let prompt = format!("\n{} {}\n{} ", "╭──".bright_black(), "🤖".yellow(), "╰── ➤".bright_magenta());
+        let prompt = format!(
+            "\n{} {}\n{} ",
+            "╭──".bright_black(),
+            "🤖".yellow(),
+            "╰── ➤".bright_magenta()
+        );
         let readline = rl.readline(&prompt);
         let prompt = match readline {
             Ok(line) => line.trim().to_string(),
@@ -392,33 +473,101 @@ async fn start_repl_loop(
 
         if prompt == "/help" {
             let bar = "│".bright_black();
-            println!("\n{}", "  ╭── Available Commands ──────────────────────".bright_black());
-            println!("  {bar} {}    Exit the program", "/quit, /exit".green().bold());
-            println!("  {bar} {}         Show this help output", "/help".green().bold());
-            println!("  {bar} {}        Clear conversation history", "/clear".green().bold());
-            println!("  {bar} {}       Refine the last generated code", "/refine".green().bold());
-            println!("  {bar} {} <file> Save last code to a file", "/save".green().bold());
-            println!("  {bar} {}      Show conversation history", "/history".green().bold());
-            println!("  {bar} {}        Show session statistics", "/stats".green().bold());
-            println!("  {bar} {}         List all previously generated scripts", "/list".green().bold());
-            println!("  {bar} {} <file>  Execute a previously generated script", "/run".green().bold());
-            println!("  {bar} {}     Show current LLM provider info", "/provider".green().bold());
-            println!("  {bar} {}         Lint the last generated code (ruff)", "/lint".green().bold());
-            println!("  {bar} {}     Run security scan (bandit)", "/security".green().bold());
-            println!("  {bar} {}    Show dashboard URL", "/dashboard".green().bold());
-            println!("  {bar} {} <file> Load file as RAG context (txt/md/csv)", "/context".green().bold());
-            println!("{}", "  ╰────────────────────────────────────────────".bright_black());
+            println!(
+                "\n{}",
+                "  ╭── Available Commands ──────────────────────".bright_black()
+            );
+            println!(
+                "  {bar} {}    Exit the program",
+                "/quit, /exit".green().bold()
+            );
+            println!(
+                "  {bar} {}         Show this help output",
+                "/help".green().bold()
+            );
+            println!(
+                "  {bar} {}        Clear conversation history",
+                "/clear".green().bold()
+            );
+            println!(
+                "  {bar} {}       Refine the last generated code",
+                "/refine".green().bold()
+            );
+            println!(
+                "  {bar} {} <file> Save last code to a file",
+                "/save".green().bold()
+            );
+            println!(
+                "  {bar} {}      Show conversation history",
+                "/history".green().bold()
+            );
+            println!(
+                "  {bar} {}        Show session statistics",
+                "/stats".green().bold()
+            );
+            println!(
+                "  {bar} {}         List all previously generated scripts",
+                "/list".green().bold()
+            );
+            println!(
+                "  {bar} {} <file>  Execute a previously generated script",
+                "/run".green().bold()
+            );
+            println!(
+                "  {bar} {}     Show current LLM provider info",
+                "/provider".green().bold()
+            );
+            println!(
+                "  {bar} {}         Lint the last generated code (ruff)",
+                "/lint".green().bold()
+            );
+            println!(
+                "  {bar} {}     Run security scan (bandit)",
+                "/security".green().bold()
+            );
+            println!(
+                "  {bar} {}    Show dashboard URL",
+                "/dashboard".green().bold()
+            );
+            println!(
+                "  {bar} {} <file> Load file as RAG context (txt/md/csv)",
+                "/context".green().bold()
+            );
+            println!(
+                "  {bar} {}      Explain the last generated code",
+                "/explain".green().bold()
+            );
+            println!(
+                "  {bar} {} <desc> Generate a multi-file project",
+                "/project".green().bold()
+            );
+            println!(
+                "  {bar} {} save/load/list  Manage sessions",
+                "/session".green().bold()
+            );
+            println!(
+                "{}",
+                "  ╰────────────────────────────────────────────".bright_black()
+            );
             println!();
             continue;
         }
 
         if prompt == "/dashboard" {
             if let Some(ref ds) = dashboard {
-                println!("{} {}",
+                println!(
+                    "{} {}",
                     "Dashboard running at:".bright_cyan(),
-                    format!("http://localhost:{}", ds.config.dashboard_port).bright_white().underline());
+                    format!("http://localhost:{}", ds.config.dashboard_port)
+                        .bright_white()
+                        .underline()
+                );
             } else {
-                println!("{}", "Dashboard is not enabled. Set enable_dashboard = true in pymakebot.toml".yellow());
+                println!(
+                    "{}",
+                    "Dashboard is not enabled. Set enable_dashboard = true in pymakebot.toml"
+                        .yellow()
+                );
             }
             continue;
         }
@@ -431,7 +580,11 @@ async fn start_repl_loop(
         if prompt == "/provider" {
             if let Ok(p) = Provider::from_config(&config.provider) {
                 println!("\n{}", "LLM Provider Info:".bright_cyan().bold());
-                println!("  {} {}", "Provider:".dimmed(), p.display_name().bright_white());
+                println!(
+                    "  {} {}",
+                    "Provider:".dimmed(),
+                    p.display_name().bright_white()
+                );
                 println!("  {}    {}", "Model:".dimmed(), config.model.bright_white());
                 if let Ok(url) = p.resolve_api_url(&config.api_url) {
                     println!("  {}  {}", "API URL:".dimmed(), url.bright_white());
@@ -448,17 +601,18 @@ async fn start_repl_loop(
                 continue;
             }
             if !linter_available {
-                println!("{}", "Linter (ruff) is not available. Install with: pip install ruff".yellow());
+                println!(
+                    "{}",
+                    "Linter (ruff) is not available. Install with: pip install ruff".yellow()
+                );
                 continue;
             }
             // Write to a temp file for linting
             match executor.write_script(&last_generated_code) {
-                Ok(path) => {
-                    match executor.lint_check(&path) {
-                        Ok(lint_result) => display_lint_results(&lint_result),
-                        Err(e) => println!("{} {}", "✗ Lint error:".red(), e),
-                    }
-                }
+                Ok(path) => match executor.lint_check(&path) {
+                    Ok(lint_result) => display_lint_results(&lint_result),
+                    Err(e) => println!("{} {}", "✗ Lint error:".red(), e),
+                },
                 Err(e) => println!("{} {}", "✗ Failed to write script for linting:".red(), e),
             }
             continue;
@@ -471,16 +625,18 @@ async fn start_repl_loop(
                 continue;
             }
             if !security_scanner_available {
-                println!("{}", "Security scanner (bandit) is not available. Install with: pip install bandit".yellow());
+                println!(
+                    "{}",
+                    "Security scanner (bandit) is not available. Install with: pip install bandit"
+                        .yellow()
+                );
                 continue;
             }
             match executor.write_script(&last_generated_code) {
-                Ok(path) => {
-                    match executor.security_check(&path) {
-                        Ok(sec_result) => display_security_results(&sec_result),
-                        Err(e) => println!("{} {}", "✗ Security scan error:".red(), e),
-                    }
-                }
+                Ok(path) => match executor.security_check(&path) {
+                    Ok(sec_result) => display_security_results(&sec_result),
+                    Err(e) => println!("{} {}", "✗ Security scan error:".red(), e),
+                },
                 Err(e) => println!("{} {}", "✗ Failed to write script for scanning:".red(), e),
             }
             continue;
@@ -497,7 +653,10 @@ async fn start_repl_loop(
             if conversation_history.is_empty() {
                 println!("{}", "No conversation history yet.".yellow());
             } else {
-                println!("\n{}", "  ╭── Conversation History ────────────────────".bright_cyan());
+                println!(
+                    "\n{}",
+                    "  ╭── Conversation History ────────────────────".bright_cyan()
+                );
                 for (i, msg) in conversation_history.iter().enumerate() {
                     let role_color = if msg.role == "user" {
                         msg.role.bright_blue()
@@ -510,9 +669,18 @@ async fn start_repl_loop(
                     } else {
                         msg.content.replace('\n', " ")
                     };
-                    println!("  {} {}. [{}] {}", "│".bright_cyan(), i + 1, role_color, preview.dimmed());
+                    println!(
+                        "  {} {}. [{}] {}",
+                        "│".bright_cyan(),
+                        i + 1,
+                        role_color,
+                        preview.dimmed()
+                    );
                 }
-                println!("{}", "  ╰────────────────────────────────────────────".bright_cyan());
+                println!(
+                    "{}",
+                    "  ╰────────────────────────────────────────────".bright_cyan()
+                );
                 println!();
             }
             continue;
@@ -555,11 +723,22 @@ async fn start_repl_loop(
                         println!("{}", "No generated scripts found.".yellow());
                     } else {
                         scripts.sort_by_key(|e| e.file_name());
-                        println!("\n{}", "  ╭── Generated Scripts ───────────────────────".bright_cyan());
+                        println!(
+                            "\n{}",
+                            "  ╭── Generated Scripts ───────────────────────".bright_cyan()
+                        );
                         for (i, entry) in scripts.iter().enumerate() {
-                            println!("  {} {}. {}", "│".bright_cyan(), i + 1, entry.file_name().to_string_lossy().bright_white());
+                            println!(
+                                "  {} {}. {}",
+                                "│".bright_cyan(),
+                                i + 1,
+                                entry.file_name().to_string_lossy().bright_white()
+                            );
                         }
-                        println!("{}", "  ╰────────────────────────────────────────────".bright_cyan());
+                        println!(
+                            "{}",
+                            "  ╰────────────────────────────────────────────".bright_cyan()
+                        );
                         println!();
                     }
                 }
@@ -601,12 +780,18 @@ async fn start_repl_loop(
                     // Check for dependencies
                     let deps = executor.detect_dependencies(&code);
                     if !deps.is_empty() {
-                        println!("\n{} {}",
+                        println!(
+                            "\n{} {}",
                             "⚠️  Detected non-standard dependencies:".yellow(),
-                            deps.join(", ").bright_yellow());
+                            deps.join(", ").bright_yellow()
+                        );
                         if config.auto_install_deps || confirm("Install these dependencies?") {
                             if let Err(e) = executor.install_packages(&deps, venv.as_deref()) {
-                                println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
+                                println!(
+                                    "{} {}",
+                                    "⚠️  Failed to install dependencies:".yellow(),
+                                    e
+                                );
                                 println!("{}", "Proceeding anyway...".dimmed());
                             }
                         }
@@ -614,14 +799,28 @@ async fn start_repl_loop(
 
                     // Detect if interactive mode is needed
                     let mode = if executor.needs_interactive_mode(&code) {
-                        println!("{}", "🎮 Interactive mode detected (pygame/input/GUI)".bright_magenta().bold());
-                        println!("{}", "   Running with inherited stdio for user interaction...".dimmed());
+                        println!(
+                            "{}",
+                            "🎮 Interactive mode detected (pygame/input/GUI)"
+                                .bright_magenta()
+                                .bold()
+                        );
+                        println!(
+                            "{}",
+                            "   Running with inherited stdio for user interaction...".dimmed()
+                        );
                         ExecutionMode::Interactive
                     } else {
                         ExecutionMode::Captured
                     };
 
-                    match executor.run_existing_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &deps) {
+                    match executor.run_existing_script(
+                        &script_path,
+                        mode,
+                        config.execution_timeout_secs,
+                        venv.as_deref(),
+                        &deps,
+                    ) {
                         Ok(result) => {
                             let success = result.is_success();
                             if success {
@@ -632,7 +831,12 @@ async fn start_repl_loop(
 
                             let _ = logger.log_execution(success, &result.stdout);
 
-                            println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
+                            println!(
+                                "\n{}",
+                                "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━"
+                                    .bright_blue()
+                                    .bold()
+                            );
                             if !result.stdout.is_empty() {
                                 println!("\n{}:", "STDOUT".green().bold());
                                 println!("{}", result.stdout);
@@ -641,7 +845,10 @@ async fn start_repl_loop(
                                 println!("\n{}:", "STDERR".red().bold());
                                 println!("{}", result.stderr);
                             }
-                            println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue());
+                            println!(
+                                "{}",
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue()
+                            );
                         }
                         Err(e) => {
                             metrics.failed_executions += 1;
@@ -662,7 +869,10 @@ async fn start_repl_loop(
 
         if prompt.starts_with("/context") {
             if !config.enable_rag {
-                println!("{}", "RAG is disabled. Set enable_rag = true in pymakebot.toml".yellow());
+                println!(
+                    "{}",
+                    "RAG is disabled. Set enable_rag = true in pymakebot.toml".yellow()
+                );
                 continue;
             }
 
@@ -682,8 +892,12 @@ async fn start_repl_loop(
             match rag_store.load_file(&file_path, config).await {
                 Ok(count) => {
                     stop_spinner(&spinner);
-                    println!("{} Loaded {} chunks from {}",
-                        "✓".green(), count.to_string().bright_white(), file_path.bright_cyan());
+                    println!(
+                        "{} Loaded {} chunks from {}",
+                        "✓".green(),
+                        count.to_string().bright_white(),
+                        file_path.bright_cyan()
+                    );
                 }
                 Err(e) => {
                     stop_spinner(&spinner);
@@ -693,9 +907,244 @@ async fn start_repl_loop(
             continue;
         }
 
+        // /explain command — ask the LLM to explain the last generated code
+        if prompt == "/explain" {
+            if last_generated_code.is_empty() {
+                println!(
+                    "{}",
+                    "No code to explain. Generate some code first!".yellow()
+                );
+                continue;
+            }
+            let spinner = start_spinner("Generating explanation...");
+            match api::explain_code(&last_generated_code, config).await {
+                Ok(explanation) => {
+                    stop_spinner(&spinner);
+                    println!(
+                        "\n{}",
+                        "━━━━━━━━━━━ Code Explanation ━━━━━━━━━━━"
+                            .bright_cyan()
+                            .bold()
+                    );
+                    println!("{}", explanation);
+                    println!(
+                        "{}",
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_cyan()
+                    );
+                }
+                Err(e) => {
+                    stop_spinner(&spinner);
+                    println!("{} {}", "✗ Explanation error:".red(), e);
+                }
+            }
+            continue;
+        }
+
+        // /project command — generate a multi-file project structure
+        if prompt.starts_with("/project") {
+            let parts: Vec<&str> = prompt.splitn(2, ' ').collect();
+            let project_prompt = if parts.len() > 1 {
+                parts[1].to_string()
+            } else {
+                ask_user("Describe the project you want to generate: ")
+            };
+
+            if project_prompt.is_empty() {
+                println!("{}", "Project generation cancelled.".yellow());
+                continue;
+            }
+
+            let spinner = start_spinner("Generating project structure...");
+            match api::generate_project(&project_prompt, config).await {
+                Ok(raw_response) => {
+                    stop_spinner(&spinner);
+                    match crate::utils::parse_project_blueprint(&raw_response) {
+                        Ok(blueprint) => {
+                            match crate::python_exec::scaffold_project(
+                                &blueprint,
+                                &config.generated_dir,
+                            ) {
+                                Ok(project_dir) => {
+                                    println!(
+                                        "\n{} {}",
+                                        "✓ Project created:".green(),
+                                        blueprint.project_name.bright_white().bold()
+                                    );
+                                    println!(
+                                        "  {} {}",
+                                        "Description:".dimmed(),
+                                        blueprint.description
+                                    );
+                                    println!("  {} {:?}", "Location:".dimmed(), project_dir);
+                                    println!("\n{}", "  Files generated:".bright_cyan());
+                                    for file in &blueprint.files {
+                                        println!("    {} {}", "•".bright_cyan(), file.path.white());
+                                    }
+                                    println!();
+                                }
+                                Err(e) => {
+                                    println!("{} {}", "✗ Failed to scaffold project:".red(), e)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("{} {}", "✗ Failed to parse project structure:".red(), e);
+                            println!("{}", "The LLM may not have returned valid JSON. Try rephrasing your request.".dimmed());
+                        }
+                    }
+                }
+                Err(e) => {
+                    stop_spinner(&spinner);
+                    println!("{} {}", "✗ API error:".red(), e);
+                }
+            }
+            metrics.total_requests += 1;
+            continue;
+        }
+
+        // /session command — save, load, or list conversation sessions
+        if prompt.starts_with("/session") {
+            let parts: Vec<&str> = prompt.splitn(3, ' ').collect();
+            let subcommand = parts.get(1).copied().unwrap_or("");
+
+            match subcommand {
+                "save" => {
+                    let name = if parts.len() > 2 {
+                        parts[2].to_string()
+                    } else {
+                        ask_user("Enter session name: ")
+                    };
+                    if name.is_empty() {
+                        println!("{}", "Save cancelled.".yellow());
+                        continue;
+                    }
+                    let sessions_dir = std::path::Path::new(&config.sessions_dir);
+                    if let Err(e) = fs::create_dir_all(sessions_dir) {
+                        println!("{} {}", "✗ Failed to create sessions directory:".red(), e);
+                        continue;
+                    }
+                    let session_data = serde_json::json!({
+                        "name": name,
+                        "timestamp": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                        "provider": config.provider,
+                        "model": config.model,
+                        "messages": conversation_history,
+                        "last_generated_code": last_generated_code,
+                    });
+                    let filename = format!("{}.json", name.replace(' ', "_"));
+                    let filepath = sessions_dir.join(&filename);
+                    match fs::write(
+                        &filepath,
+                        serde_json::to_string_pretty(&session_data).unwrap_or_default(),
+                    ) {
+                        Ok(_) => println!(
+                            "{} {}",
+                            "✓ Session saved:".green(),
+                            filepath.display().to_string().bright_white()
+                        ),
+                        Err(e) => println!("{} {}", "✗ Failed to save session:".red(), e),
+                    }
+                }
+                "load" => {
+                    let name = if parts.len() > 2 {
+                        parts[2].to_string()
+                    } else {
+                        ask_user("Enter session name: ")
+                    };
+                    if name.is_empty() {
+                        println!("{}", "Load cancelled.".yellow());
+                        continue;
+                    }
+                    let filename = format!("{}.json", name.replace(' ', "_"));
+                    let filepath = std::path::Path::new(&config.sessions_dir).join(&filename);
+                    match fs::read_to_string(&filepath) {
+                        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                            Ok(data) => {
+                                if let Some(messages) = data.get("messages") {
+                                    if let Ok(msgs) =
+                                        serde_json::from_value::<Vec<Message>>(messages.clone())
+                                    {
+                                        conversation_history = msgs;
+                                    }
+                                }
+                                if let Some(code) =
+                                    data.get("last_generated_code").and_then(|v| v.as_str())
+                                {
+                                    last_generated_code = code.to_string();
+                                }
+                                println!(
+                                    "{} Loaded session '{}' ({} messages)",
+                                    "✓".green(),
+                                    name.bright_white(),
+                                    conversation_history.len()
+                                );
+                            }
+                            Err(e) => println!("{} {}", "✗ Failed to parse session file:".red(), e),
+                        },
+                        Err(e) => println!("{} {}", "✗ Failed to read session file:".red(), e),
+                    }
+                }
+                "list" => {
+                    let sessions_dir = std::path::Path::new(&config.sessions_dir);
+                    if !sessions_dir.exists() {
+                        println!("{}", "No saved sessions found.".yellow());
+                        continue;
+                    }
+                    match fs::read_dir(sessions_dir) {
+                        Ok(entries) => {
+                            let mut sessions: Vec<_> = entries
+                                .filter_map(|e| e.ok())
+                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                                .collect();
+                            if sessions.is_empty() {
+                                println!("{}", "No saved sessions found.".yellow());
+                            } else {
+                                sessions.sort_by_key(|e| e.file_name());
+                                println!(
+                                    "\n{}",
+                                    "  ╭── Saved Sessions ──────────────────────────".bright_cyan()
+                                );
+                                for (i, entry) in sessions.iter().enumerate() {
+                                    let name = entry
+                                        .path()
+                                        .file_stem()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string();
+                                    println!(
+                                        "  {} {}. {}",
+                                        "│".bright_cyan(),
+                                        i + 1,
+                                        name.bright_white()
+                                    );
+                                }
+                                println!(
+                                    "{}",
+                                    "  ╰────────────────────────────────────────────".bright_cyan()
+                                );
+                                println!();
+                            }
+                        }
+                        Err(e) => println!("{} {}", "✗ Failed to list sessions:".red(), e),
+                    }
+                }
+                _ => {
+                    println!(
+                        "{}",
+                        "Usage: /session save <name> | /session load <name> | /session list"
+                            .yellow()
+                    );
+                }
+            }
+            continue;
+        }
+
         if prompt == "/refine" {
             if last_generated_code.is_empty() {
-                println!("{}", "No code to refine. Generate some code first!".yellow());
+                println!(
+                    "{}",
+                    "No code to refine. Generate some code first!".yellow()
+                );
                 continue;
             }
             print!("{}", "What would you like to change or add? ".cyan());
@@ -712,7 +1161,9 @@ async fn start_repl_loop(
             let refine_content = format!("Please refine the previous code: {}", refinement);
             let final_refine = if config.enable_rag && !rag_store.is_empty() {
                 match rag_store.retrieve(refinement, 3, config).await {
-                    Ok(chunks) if !chunks.is_empty() => rag::build_rag_prompt(&chunks, &refine_content),
+                    Ok(chunks) if !chunks.is_empty() => {
+                        rag::build_rag_prompt(&chunks, &refine_content)
+                    }
                     _ => refine_content,
                 }
             } else {
@@ -742,10 +1193,41 @@ async fn start_repl_loop(
         let _ = logger.log_api_request(&conversation_history.last().unwrap().content);
         metrics.total_requests += 1;
 
-        // Call Hugging Face with conversation history
-        let spinner = start_spinner("Generating code...");
-        let api_result = api::generate_code_with_history(&conversation_history, config).await;
-        stop_spinner(&spinner);
+        // Call the LLM — use streaming if enabled
+        let api_result = if config.use_streaming {
+            // Streaming mode: print tokens as they arrive
+            print!("\n{} ", "⟩".bright_cyan());
+            let _ = io::stdout().flush();
+            match api::generate_code_stream(&conversation_history, config).await {
+                Ok((chunks, full_content)) => {
+                    // Print each chunk as it arrives (simulate streaming effect)
+                    for chunk in &chunks {
+                        print!("{}", chunk.dimmed());
+                        let _ = io::stdout().flush();
+                    }
+                    println!();
+                    Ok(full_content)
+                }
+                Err(e) => {
+                    // Fall back to non-streaming on error
+                    println!();
+                    let spinner = start_spinner("Falling back to non-streaming...");
+                    let result =
+                        api::generate_code_with_history(&conversation_history, config).await;
+                    stop_spinner(&spinner);
+                    if result.is_err() {
+                        Err(e) // Return original streaming error
+                    } else {
+                        result
+                    }
+                }
+            }
+        } else {
+            let spinner = start_spinner("Generating code...");
+            let result = api::generate_code_with_history(&conversation_history, config).await;
+            stop_spinner(&spinner);
+            result
+        };
 
         match api_result {
             Ok(raw_response) => {
@@ -778,7 +1260,14 @@ async fn start_repl_loop(
 
                 // Sync state to dashboard and broadcast event
                 if let Some(ref ds) = dashboard {
-                    sync_to_dashboard(ds, &metrics, &last_synced_metrics, &conversation_history, &last_generated_code).await;
+                    sync_to_dashboard(
+                        ds,
+                        &metrics,
+                        &last_synced_metrics,
+                        &conversation_history,
+                        &last_generated_code,
+                    )
+                    .await;
                     last_synced_metrics = metrics.clone();
                     ds.broadcast(ExecutionEvent::CodeGenerated {
                         code: code.clone(),
@@ -788,7 +1277,11 @@ async fn start_repl_loop(
 
                 // Syntax check
                 if let Err(syntax_err) = executor.syntax_check(&script_path) {
-                    println!("\n{} {}", "✗ Syntax error detected:".red().bold(), syntax_err);
+                    println!(
+                        "\n{} {}",
+                        "✗ Syntax error detected:".red().bold(),
+                        syntax_err
+                    );
                     if confirm("Auto-refine to fix this error?") {
                         // Add syntax error to conversation history for auto-refine
                         conversation_history.push(Message {
@@ -801,10 +1294,12 @@ async fn start_repl_loop(
                         // Skip execution, let the loop iterate to call the API again
                         // by falling through (we already pushed the user message)
                         metrics.total_requests += 1;
-                        let _ = logger.log_api_request(&format!("Auto-refine syntax: {}", syntax_err));
+                        let _ =
+                            logger.log_api_request(&format!("Auto-refine syntax: {}", syntax_err));
 
                         let spinner = start_spinner("Auto-refining code...");
-                        let api_result = api::generate_code_with_history(&conversation_history, config).await;
+                        let api_result =
+                            api::generate_code_with_history(&conversation_history, config).await;
                         stop_spinner(&spinner);
 
                         match api_result {
@@ -817,7 +1312,10 @@ async fn start_repl_loop(
                                     role: "assistant".to_string(),
                                     content: fixed_code.clone(),
                                 });
-                                trim_history(&mut conversation_history, config.max_history_messages);
+                                trim_history(
+                                    &mut conversation_history,
+                                    config.max_history_messages,
+                                );
 
                                 display_code(&fixed_code);
 
@@ -835,7 +1333,8 @@ async fn start_repl_loop(
                             }
                             Err(e) => {
                                 metrics.api_errors += 1;
-                                let _ = logger.log_error(&format!("API error during auto-refine: {}", e));
+                                let _ = logger
+                                    .log_error(&format!("API error during auto-refine: {}", e));
                                 println!("{} {}", "✗ API error during auto-refine:".red(), e);
                                 conversation_history.pop();
                                 continue;
@@ -854,7 +1353,8 @@ async fn start_repl_loop(
                             if lint_result.has_errors {
                                 if confirm("Auto-refine to fix lint errors?") {
                                     // Build a lint error summary for the LLM
-                                    let lint_issues: String = lint_result.diagnostics
+                                    let lint_issues: String = lint_result
+                                        .diagnostics
                                         .iter()
                                         .map(|d| d.message.as_str())
                                         .collect::<Vec<_>>()
@@ -867,10 +1367,17 @@ async fn start_repl_loop(
                                         ),
                                     });
                                     metrics.total_requests += 1;
-                                    let _ = logger.log_api_request(&format!("Auto-refine lint: {}", lint_issues));
+                                    let _ = logger.log_api_request(&format!(
+                                        "Auto-refine lint: {}",
+                                        lint_issues
+                                    ));
 
                                     let spinner = start_spinner("Auto-refining code...");
-                                    let api_result = api::generate_code_with_history(&conversation_history, config).await;
+                                    let api_result = api::generate_code_with_history(
+                                        &conversation_history,
+                                        config,
+                                    )
+                                    .await;
                                     stop_spinner(&spinner);
 
                                     match api_result {
@@ -883,25 +1390,45 @@ async fn start_repl_loop(
                                                 role: "assistant".to_string(),
                                                 content: fixed_code.clone(),
                                             });
-                                            trim_history(&mut conversation_history, config.max_history_messages);
+                                            trim_history(
+                                                &mut conversation_history,
+                                                config.max_history_messages,
+                                            );
 
                                             display_code(&fixed_code);
 
                                             if let Err(e) = fs::write(&script_path, &fixed_code) {
-                                                println!("{} {}", "✗ Failed to write fixed script:".red(), e);
+                                                println!(
+                                                    "{} {}",
+                                                    "✗ Failed to write fixed script:".red(),
+                                                    e
+                                                );
                                                 continue;
                                             }
 
                                             // Re-check syntax after lint fix
-                                            if let Err(syn_err) = executor.syntax_check(&script_path) {
-                                                println!("{} {}", "✗ Fixed code has syntax errors:".red(), syn_err);
+                                            if let Err(syn_err) =
+                                                executor.syntax_check(&script_path)
+                                            {
+                                                println!(
+                                                    "{} {}",
+                                                    "✗ Fixed code has syntax errors:".red(),
+                                                    syn_err
+                                                );
                                                 continue;
                                             }
                                         }
                                         Err(e) => {
                                             metrics.api_errors += 1;
-                                            let _ = logger.log_error(&format!("API error during lint auto-refine: {}", e));
-                                            println!("{} {}", "✗ API error during auto-refine:".red(), e);
+                                            let _ = logger.log_error(&format!(
+                                                "API error during lint auto-refine: {}",
+                                                e
+                                            ));
+                                            println!(
+                                                "{} {}",
+                                                "✗ API error during auto-refine:".red(),
+                                                e
+                                            );
                                             conversation_history.pop();
                                             continue;
                                         }
@@ -947,12 +1474,18 @@ async fn start_repl_loop(
                     // Check for dependencies
                     let deps = executor.detect_dependencies(&last_generated_code);
                     if !deps.is_empty() {
-                        println!("\n{} {}",
+                        println!(
+                            "\n{} {}",
                             "⚠️  Detected non-standard dependencies:".yellow(),
-                            deps.join(", ").bright_yellow());
+                            deps.join(", ").bright_yellow()
+                        );
                         if config.auto_install_deps || confirm("Install these dependencies?") {
                             if let Err(e) = executor.install_packages(&deps, venv.as_deref()) {
-                                println!("{} {}", "⚠️  Failed to install dependencies:".yellow(), e);
+                                println!(
+                                    "{} {}",
+                                    "⚠️  Failed to install dependencies:".yellow(),
+                                    e
+                                );
                                 println!("{}", "Proceeding anyway...".dimmed());
                             }
                         }
@@ -960,8 +1493,16 @@ async fn start_repl_loop(
 
                     // Detect if interactive mode is needed
                     let mode = if executor.needs_interactive_mode(&last_generated_code) {
-                        println!("{}", "🎮 Interactive mode detected (pygame/input/GUI)".bright_magenta().bold());
-                        println!("{}", "   Running with inherited stdio for user interaction...".dimmed());
+                        println!(
+                            "{}",
+                            "🎮 Interactive mode detected (pygame/input/GUI)"
+                                .bright_magenta()
+                                .bold()
+                        );
+                        println!(
+                            "{}",
+                            "   Running with inherited stdio for user interaction...".dimmed()
+                        );
                         ExecutionMode::Interactive
                     } else {
                         ExecutionMode::Captured
@@ -974,7 +1515,13 @@ async fn start_repl_loop(
                         });
                     }
 
-                    match executor.execute_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &deps) {
+                    match executor.execute_script(
+                        &script_path,
+                        mode,
+                        config.execution_timeout_secs,
+                        venv.as_deref(),
+                        &deps,
+                    ) {
                         Ok(result) => {
                             let success = result.is_success();
                             if success {
@@ -992,11 +1539,23 @@ async fn start_repl_loop(
                                     success,
                                     exit_code: result.exit_code,
                                 });
-                                sync_to_dashboard(ds, &metrics, &last_synced_metrics, &conversation_history, &last_generated_code).await;
+                                sync_to_dashboard(
+                                    ds,
+                                    &metrics,
+                                    &last_synced_metrics,
+                                    &conversation_history,
+                                    &last_generated_code,
+                                )
+                                .await;
                                 last_synced_metrics = metrics.clone();
                             }
 
-                            println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
+                            println!(
+                                "\n{}",
+                                "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━"
+                                    .bright_blue()
+                                    .bold()
+                            );
                             println!("{} {:?}", "Script saved at:".dimmed(), result.script_path);
                             if !result.stdout.is_empty() {
                                 println!("\n{}:", "STDOUT".green().bold());
@@ -1006,10 +1565,14 @@ async fn start_repl_loop(
                                 println!("\n{}:", "STDERR".red().bold());
                                 println!("{}", result.stderr);
                             }
-                            println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue());
+                            println!(
+                                "{}",
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue()
+                            );
 
                             // Offer auto-refine on runtime errors
-                            if !success && !result.stderr.is_empty()
+                            if !success
+                                && !result.stderr.is_empty()
                                 && confirm("Auto-refine to fix this runtime error?")
                             {
                                 conversation_history.push(Message {
@@ -1020,10 +1583,15 @@ async fn start_repl_loop(
                                     ),
                                 });
                                 metrics.total_requests += 1;
-                                let _ = logger.log_api_request(&format!("Auto-refine runtime: {}", result.stderr));
+                                let _ = logger.log_api_request(&format!(
+                                    "Auto-refine runtime: {}",
+                                    result.stderr
+                                ));
 
                                 let spinner = start_spinner("Auto-refining code...");
-                                let api_result = api::generate_code_with_history(&conversation_history, config).await;
+                                let api_result =
+                                    api::generate_code_with_history(&conversation_history, config)
+                                        .await;
                                 stop_spinner(&spinner);
 
                                 match api_result {
@@ -1036,7 +1604,10 @@ async fn start_repl_loop(
                                             role: "assistant".to_string(),
                                             content: fixed_code.clone(),
                                         });
-                                        trim_history(&mut conversation_history, config.max_history_messages);
+                                        trim_history(
+                                            &mut conversation_history,
+                                            config.max_history_messages,
+                                        );
 
                                         display_code(&fixed_code);
 
@@ -1045,12 +1616,28 @@ async fn start_repl_loop(
 
                                         // Overwrite the script with the fixed code
                                         if let Err(e) = fs::write(&script_path, &fixed_code) {
-                                            println!("{} {}", "✗ Failed to write fixed script:".red(), e);
-                                        } else if let Err(syn_err) = executor.syntax_check(&script_path) {
-                                            println!("{} {}", "✗ Fixed code has syntax errors:".red(), syn_err);
+                                            println!(
+                                                "{} {}",
+                                                "✗ Failed to write fixed script:".red(),
+                                                e
+                                            );
+                                        } else if let Err(syn_err) =
+                                            executor.syntax_check(&script_path)
+                                        {
+                                            println!(
+                                                "{} {}",
+                                                "✗ Fixed code has syntax errors:".red(),
+                                                syn_err
+                                            );
                                         } else if confirm("Execute the fixed script?") {
                                             // Reuse the same venv for the retry execution
-                                            match executor.execute_script(&script_path, mode, config.execution_timeout_secs, venv.as_deref(), &fixed_deps) {
+                                            match executor.execute_script(
+                                                &script_path,
+                                                mode,
+                                                config.execution_timeout_secs,
+                                                venv.as_deref(),
+                                                &fixed_deps,
+                                            ) {
                                                 Ok(retry_result) => {
                                                     let retry_success = retry_result.is_success();
                                                     if retry_success {
@@ -1058,10 +1645,22 @@ async fn start_repl_loop(
                                                     } else {
                                                         metrics.failed_executions += 1;
                                                     }
-                                                    let _ = logger.log_execution(retry_success, &retry_result.stdout);
+                                                    let _ = logger.log_execution(
+                                                        retry_success,
+                                                        &retry_result.stdout,
+                                                    );
 
-                                                    println!("\n{}", "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━".bright_blue().bold());
-                                                    println!("{} {:?}", "Script saved at:".dimmed(), retry_result.script_path);
+                                                    println!(
+                                                        "\n{}",
+                                                        "━━━━━━━━━━━ Execution Result ━━━━━━━━━━━"
+                                                            .bright_blue()
+                                                            .bold()
+                                                    );
+                                                    println!(
+                                                        "{} {:?}",
+                                                        "Script saved at:".dimmed(),
+                                                        retry_result.script_path
+                                                    );
                                                     if !retry_result.stdout.is_empty() {
                                                         println!("\n{}:", "STDOUT".green().bold());
                                                         println!("{}", retry_result.stdout);
@@ -1070,20 +1669,38 @@ async fn start_repl_loop(
                                                         println!("\n{}:", "STDERR".red().bold());
                                                         println!("{}", retry_result.stderr);
                                                     }
-                                                    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_blue());
+                                                    println!(
+                                                        "{}",
+                                                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                                                            .bright_blue()
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     metrics.failed_executions += 1;
-                                                    let _ = logger.log_error(&format!("Execution error: {}", e));
-                                                    println!("{} {}", "✗ Execution error:".red(), e);
+                                                    let _ = logger.log_error(&format!(
+                                                        "Execution error: {}",
+                                                        e
+                                                    ));
+                                                    println!(
+                                                        "{} {}",
+                                                        "✗ Execution error:".red(),
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         metrics.api_errors += 1;
-                                        let _ = logger.log_error(&format!("API error during auto-refine: {}", e));
-                                        println!("{} {}", "✗ API error during auto-refine:".red(), e);
+                                        let _ = logger.log_error(&format!(
+                                            "API error during auto-refine: {}",
+                                            e
+                                        ));
+                                        println!(
+                                            "{} {}",
+                                            "✗ API error during auto-refine:".red(),
+                                            e
+                                        );
                                         conversation_history.pop();
                                     }
                                 }
@@ -1130,9 +1747,15 @@ async fn sync_to_dashboard(
 ) {
     {
         let mut m = ds.metrics.write().await;
-        m.total_requests += metrics.total_requests.saturating_sub(last_synced.total_requests);
-        m.successful_executions += metrics.successful_executions.saturating_sub(last_synced.successful_executions);
-        m.failed_executions += metrics.failed_executions.saturating_sub(last_synced.failed_executions);
+        m.total_requests += metrics
+            .total_requests
+            .saturating_sub(last_synced.total_requests);
+        m.successful_executions += metrics
+            .successful_executions
+            .saturating_sub(last_synced.successful_executions);
+        m.failed_executions += metrics
+            .failed_executions
+            .saturating_sub(last_synced.failed_executions);
         m.api_errors += metrics.api_errors.saturating_sub(last_synced.api_errors);
     }
     {
@@ -1171,7 +1794,12 @@ fn display_lint_results(result: &crate::python_exec::LintResult) {
         return;
     }
 
-    println!("\n{}", "━━━━━━━━━━━━ Lint Results ━━━━━━━━━━━━".bright_yellow().bold());
+    println!(
+        "\n{}",
+        "━━━━━━━━━━━━ Lint Results ━━━━━━━━━━━━"
+            .bright_yellow()
+            .bold()
+    );
     for diag in &result.diagnostics {
         let icon = match diag.severity {
             LintSeverity::Error => "  ✗".red().bold(),
@@ -1182,7 +1810,10 @@ fn display_lint_results(result: &crate::python_exec::LintResult) {
     if !result.summary.is_empty() {
         println!("\n{}", result.summary.dimmed());
     }
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_yellow());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_yellow()
+    );
 }
 
 /// Display security scan results with colored output.
@@ -1192,7 +1823,12 @@ fn display_security_results(result: &crate::python_exec::SecurityResult) {
         return;
     }
 
-    println!("\n{}", "━━━━━━━━━━ Security Scan Results ━━━━━━━━━━".bright_red().bold());
+    println!(
+        "\n{}",
+        "━━━━━━━━━━ Security Scan Results ━━━━━━━━━━"
+            .bright_red()
+            .bold()
+    );
     for diag in &result.diagnostics {
         let icon = match diag.severity {
             SecuritySeverity::High => "  ✗".red().bold(),
@@ -1209,6 +1845,8 @@ fn display_security_results(result: &crate::python_exec::SecurityResult) {
     if !result.summary.is_empty() {
         println!("\n{}", result.summary.dimmed());
     }
-    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_red());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_red()
+    );
 }
-

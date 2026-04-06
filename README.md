@@ -1,4 +1,4 @@
-# 🤖 Python Maker Bot v0.3.0
+# 🤖 Python Maker Bot v0.4.0
 
 **An AI-Powered Python Code Generator Built with Rust**
 
@@ -29,6 +29,11 @@ A Rust-based interactive shell that leverages AI language models to generate, re
 - **API Retry with Backoff**: Automatic retries with exponential backoff on network errors, rate limits, and server errors
 - **Execution Timeout**: Configurable timeout kills runaway scripts (Captured mode only)
 - **Conversation History Limit**: Automatically trims old messages to keep context manageable
+- **Streaming Responses** ⚡: Real-time token-by-token code generation in REPL and dashboard via SSE
+- **Code Explanation** 📖: `/explain` command and dashboard button for step-by-step code breakdowns
+- **Multi-File Projects** 📁: `/project` command generates entire project structures with multiple files
+- **Session Persistence** 💾: Save and load conversation sessions across restarts
+- **CI/CD Pipeline** ✅: GitHub Actions with automated formatting, linting, and testing
 - **Script Management**: List and re-run previously generated scripts anytime
 - **Dependency Detection**: Automatically detects non-standard library imports
 - **Auto-Installation**: Prompts to install required packages via pip (or auto-installs with config)
@@ -108,6 +113,11 @@ use_docker = true
 | `/lint` | Lint the last generated code with ruff |
 | `/security` | Run security scan (bandit) on last code |
 | `/dashboard` | Show dashboard URL (if enabled) |
+| `/explain` | Explain the last generated code step-by-step |
+| `/project <prompt>` | Generate a multi-file project structure |
+| `/session save <name>` | Save current session to disk |
+| `/session load <name>` | Load a saved session |
+| `/session list` | List all saved sessions |
 
 ### Example Session
 
@@ -382,18 +392,6 @@ fn main() -> anyhow::Result<()> {
 ```
 
 
-## 📚 Documentation
-
-Complete guides available:
-
-- **[DEMO_EXAMPLES.md](DEMO_EXAMPLES.md)** - Battle-tested examples perfect for demos and presentations
-- **[DEFENSE_CHEATSHEET.md](DEFENSE_CHEATSHEET.md)** - Quick reference for project defense/presentations
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet and feature overview
-- **[INTERACTIVE_MODE.md](INTERACTIVE_MODE.md)** - Technical deep dive into interactive execution
-- **[EXAMPLES.md](EXAMPLES.md)** - Usage examples and patterns
-- **[FIX_SUMMARY.md](FIX_SUMMARY.md)** - Technical implementation details
-- **[ARCHITECTURE_DIAGRAM.md](ARCHITECTURE_DIAGRAM.md)** - Visual system diagrams
-
 ---
 
 ## 📝 License
@@ -419,7 +417,26 @@ MIT License - see LICENSE file for details
 
 ## 🔄 Version History
 
-### v0.3.0 (Current — February 2026)
+### v0.4.0 (Current — April 2026)
+- ⚡ **Streaming LLM Responses**: Real-time token-by-token code generation in both REPL and web dashboard
+  - REPL: characters appear as the model generates them (typing effect)
+  - Dashboard: Server-Sent Events (SSE) endpoint for live streaming
+  - Configurable via `use_streaming = true` in `pymakebot.toml`
+  - Graceful fallback to non-streaming on error
+- 📖 **Code Explanation Mode**: `/explain` REPL command and dashboard "Explain" button
+  - Sends generated code to the LLM with a dedicated explanation system prompt
+  - Returns structured breakdown: overview, step-by-step walkthrough, key concepts, improvements
+- 📁 **Multi-File Project Generation**: `/project <prompt>` command scaffolds complete project structures
+  - LLM outputs structured JSON with file paths and contents
+  - Writes to `generated/<project_name>/` with proper directory hierarchy
+  - Security: validates paths (no `..`, no absolute paths)
+- 💾 **Conversation Persistence**: Save and load sessions across restarts
+  - `/session save <name>` — serialize conversation history, code, and metadata to JSON
+  - `/session load <name>` — restore a previous session
+  - `/session list` — browse saved sessions with timestamps
+- ✅ **CI/CD Pipeline**: GitHub Actions workflow with `cargo fmt`, `cargo clippy`, and `cargo test`
+
+### v0.3.0 (February 2026)
 - 🌐 **Web Dashboard**: Real-time browser-based dashboard running alongside the CLI REPL
   - Code generation via the web UI (same LLM & config as the REPL)
   - Script history sidebar with click-to-view source

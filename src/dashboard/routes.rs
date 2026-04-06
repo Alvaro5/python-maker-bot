@@ -436,7 +436,12 @@ fn execute_script_with_streaming(
                 };
                 state.broadcast(ExecutionEvent::LogLine {
                     timestamp: now_hms(),
-                    stream: if lint_result.has_errors { "stderr" } else { "info" }.to_string(),
+                    stream: if lint_result.has_errors {
+                        "stderr"
+                    } else {
+                        "info"
+                    }
+                    .to_string(),
                     content: summary,
                 });
                 state.broadcast(ExecutionEvent::LintCompleted {
@@ -540,10 +545,7 @@ fn execute_script_with_streaming(
     };
 
     if !deps.is_empty() {
-        if let Err(e) = state
-            .executor
-            .install_packages(&deps, venv_path.as_deref())
-        {
+        if let Err(e) = state.executor.install_packages(&deps, venv_path.as_deref()) {
             state.broadcast(ExecutionEvent::LogLine {
                 timestamp: now_hms(),
                 stream: "stderr".to_string(),
@@ -561,7 +563,10 @@ fn execute_script_with_streaming(
 
     let timeout_secs = settings.execution_timeout_secs;
 
-    match state.executor.spawn_piped(&script_path, venv_path.as_deref(), &deps) {
+    match state
+        .executor
+        .spawn_piped(&script_path, venv_path.as_deref(), &deps)
+    {
         Ok(mut child) => {
             // Store PID for kill support
             let child_pid = child.id();
@@ -633,10 +638,7 @@ fn execute_script_with_streaming(
                         state.broadcast(ExecutionEvent::LogLine {
                             timestamp: now_hms(),
                             stream: "stderr".to_string(),
-                            content: format!(
-                                "Process timed out after {} seconds.",
-                                timeout_secs
-                            ),
+                            content: format!("Process timed out after {} seconds.", timeout_secs),
                         });
                         None
                     }
@@ -679,10 +681,7 @@ fn execute_script_with_streaming(
             }
 
             let success = exit_code == Some(0);
-            state.broadcast(ExecutionEvent::ExecutionCompleted {
-                success,
-                exit_code,
-            });
+            state.broadcast(ExecutionEvent::ExecutionCompleted { success, exit_code });
 
             let mut m = state.metrics.blocking_write();
             if success {
@@ -714,9 +713,7 @@ fn execute_script_with_streaming(
 
 // ── POST /api/execute/kill — kill running script ─────────────────────
 
-pub async fn kill_execution(
-    State(state): State<Arc<DashboardState>>,
-) -> impl IntoResponse {
+pub async fn kill_execution(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     let mut pid_lock = state.running_pid.lock().await;
     if let Some(pid) = pid_lock.take() {
         let _ = std::process::Command::new("kill")
@@ -755,12 +752,14 @@ pub async fn send_input(
                 });
                 Json(serde_json::json!({ "status": "sent" }))
             }
-            Err(e) => {
-                Json(serde_json::json!({ "status": "error", "message": format!("Write failed: {}", e) }))
-            }
+            Err(e) => Json(
+                serde_json::json!({ "status": "error", "message": format!("Write failed: {}", e) }),
+            ),
         }
     } else {
-        Json(serde_json::json!({ "status": "no_process", "message": "No running process to send input to" }))
+        Json(
+            serde_json::json!({ "status": "no_process", "message": "No running process to send input to" }),
+        )
     }
 }
 
@@ -906,9 +905,7 @@ pub struct SessionListEntry {
 }
 
 /// GET /api/sessions — list all sessions
-pub async fn list_sessions(
-    State(state): State<Arc<DashboardState>>,
-) -> impl IntoResponse {
+pub async fn list_sessions(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     let sessions = state.sessions.read().await;
     let active_id = state.active_session_id.read().await;
 
@@ -935,18 +932,14 @@ pub async fn list_sessions(
 }
 
 /// POST /api/sessions — create a new session
-pub async fn create_session(
-    State(state): State<Arc<DashboardState>>,
-) -> impl IntoResponse {
+pub async fn create_session(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     let new_id = uuid::Uuid::new_v4().to_string();
     let session = ChatSession {
         id: new_id.clone(),
         name: "New Chat".to_string(),
         messages: Vec::new(),
         last_generated_code: String::new(),
-        created_at: chrono::Local::now()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
+        created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     };
 
     {
@@ -1042,17 +1035,14 @@ pub struct ProviderModels {
 
 /// GET /api/models — return available models grouped by provider.
 /// Fetches live model lists from HuggingFace and Ollama at runtime.
-pub async fn get_models(
-    State(state): State<Arc<DashboardState>>,
-) -> impl IntoResponse {
+pub async fn get_models(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     let settings = state.runtime_settings.read().await;
     let current_provider = settings.provider.clone();
     let current_model = settings.model.clone();
     drop(settings);
 
     // Fetch live model lists from HF and Ollama in parallel
-    let (hf_models, ollama_models) =
-        tokio::join!(fetch_hf_models(), fetch_ollama_models());
+    let (hf_models, ollama_models) = tokio::join!(fetch_hf_models(), fetch_ollama_models());
 
     let openai_models = vec![
         "gpt-4o".to_string(),
@@ -1094,11 +1084,7 @@ async fn fetch_ollama_models() -> Vec<String> {
         .build()
         .unwrap_or_default();
 
-    match client
-        .get("http://localhost:11434/api/tags")
-        .send()
-        .await
-    {
+    match client.get("http://localhost:11434/api/tags").send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 if let Some(models) = body["models"].as_array() {
@@ -1198,9 +1184,7 @@ fn curated_hf_models() -> Vec<String> {
 // ══════════════════════════════════════════════════════════════════════
 
 /// GET /api/settings — return current runtime settings
-pub async fn get_settings(
-    State(state): State<Arc<DashboardState>>,
-) -> impl IntoResponse {
+pub async fn get_settings(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     let settings = state.runtime_settings.read().await;
     Json(settings.clone())
 }
@@ -1413,4 +1397,226 @@ fn html_escape(s: &str) -> String {
 
 fn now_hms() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+// ── POST /api/explain — explain code step-by-step ───────────────────
+
+#[derive(Deserialize)]
+pub struct ExplainRequest {
+    pub code: String,
+}
+
+#[derive(Serialize)]
+pub struct ExplainResponse {
+    pub success: bool,
+    pub explanation: String,
+    pub error: String,
+}
+
+pub async fn explain_code_endpoint(
+    State(state): State<Arc<DashboardState>>,
+    Form(req): Form<ExplainRequest>,
+) -> impl IntoResponse {
+    if req.code.trim().is_empty() {
+        return Json(ExplainResponse {
+            success: false,
+            explanation: String::new(),
+            error: "No code to explain.".to_string(),
+        });
+    }
+
+    let effective_config = {
+        let settings = state.runtime_settings.read().await;
+        settings.to_app_config(&state.config)
+    };
+
+    match api::explain_code(&req.code, &effective_config).await {
+        Ok(explanation) => Json(ExplainResponse {
+            success: true,
+            explanation,
+            error: String::new(),
+        }),
+        Err(e) => Json(ExplainResponse {
+            success: false,
+            explanation: String::new(),
+            error: format!("Explanation error: {}", e),
+        }),
+    }
+}
+
+// ── POST /api/generate/project — generate a multi-file project ──────
+
+#[derive(Deserialize)]
+pub struct ProjectRequest {
+    pub prompt: String,
+}
+
+#[derive(Serialize)]
+pub struct ProjectResponse {
+    pub success: bool,
+    pub project_name: String,
+    pub description: String,
+    pub files: Vec<ProjectFileEntry>,
+    pub project_dir: String,
+    pub error: String,
+}
+
+#[derive(Serialize)]
+pub struct ProjectFileEntry {
+    pub path: String,
+}
+
+pub async fn generate_project(
+    State(state): State<Arc<DashboardState>>,
+    Form(req): Form<ProjectRequest>,
+) -> impl IntoResponse {
+    if req.prompt.trim().is_empty() {
+        return Json(ProjectResponse {
+            success: false,
+            project_name: String::new(),
+            description: String::new(),
+            files: Vec::new(),
+            project_dir: String::new(),
+            error: "Please enter a project description.".to_string(),
+        });
+    }
+
+    let effective_config = {
+        let settings = state.runtime_settings.read().await;
+        settings.to_app_config(&state.config)
+    };
+
+    // Increment metrics
+    {
+        let mut m = state.metrics.write().await;
+        m.total_requests += 1;
+    }
+
+    match api::generate_project(&req.prompt, &effective_config).await {
+        Ok(raw_response) => match crate::utils::parse_project_blueprint(&raw_response) {
+            Ok(blueprint) => {
+                match crate::python_exec::scaffold_project(
+                    &blueprint,
+                    &effective_config.generated_dir,
+                ) {
+                    Ok(project_dir) => Json(ProjectResponse {
+                        success: true,
+                        project_name: blueprint.project_name,
+                        description: blueprint.description,
+                        files: blueprint
+                            .files
+                            .iter()
+                            .map(|f| ProjectFileEntry {
+                                path: f.path.clone(),
+                            })
+                            .collect(),
+                        project_dir: project_dir.display().to_string(),
+                        error: String::new(),
+                    }),
+                    Err(e) => Json(ProjectResponse {
+                        success: false,
+                        project_name: String::new(),
+                        description: String::new(),
+                        files: Vec::new(),
+                        project_dir: String::new(),
+                        error: format!("Scaffold error: {}", e),
+                    }),
+                }
+            }
+            Err(e) => Json(ProjectResponse {
+                success: false,
+                project_name: String::new(),
+                description: String::new(),
+                files: Vec::new(),
+                project_dir: String::new(),
+                error: format!("Parse error: {}", e),
+            }),
+        },
+        Err(e) => Json(ProjectResponse {
+            success: false,
+            project_name: String::new(),
+            description: String::new(),
+            files: Vec::new(),
+            project_dir: String::new(),
+            error: format!("API error: {}", e),
+        }),
+    }
+}
+
+// ── Session persistence endpoints ───────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SavedSessionEntry {
+    pub name: String,
+    pub filename: String,
+}
+
+pub async fn list_saved_sessions(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
+    let sessions_dir = std::path::Path::new(&state.config.sessions_dir);
+    if !sessions_dir.exists() {
+        return Json(Vec::<SavedSessionEntry>::new());
+    }
+
+    let mut entries = Vec::new();
+    if let Ok(dir) = std::fs::read_dir(sessions_dir) {
+        for entry in dir.flatten() {
+            if entry.path().extension().is_some_and(|ext| ext == "json") {
+                let name = entry
+                    .path()
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                entries.push(SavedSessionEntry {
+                    name,
+                    filename: entry.file_name().to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    Json(entries)
+}
+
+#[derive(Deserialize)]
+pub struct SaveSessionRequest {
+    pub name: String,
+    pub session_id: String,
+}
+
+pub async fn save_session_to_disk(
+    State(state): State<Arc<DashboardState>>,
+    Form(req): Form<SaveSessionRequest>,
+) -> impl IntoResponse {
+    let sessions_dir = std::path::Path::new(&state.config.sessions_dir);
+    if let Err(e) = std::fs::create_dir_all(sessions_dir) {
+        return Json(
+            serde_json::json!({"success": false, "error": format!("Failed to create sessions dir: {}", e)}),
+        );
+    }
+
+    let sessions = state.sessions.read().await;
+    let session = match sessions.get(&req.session_id) {
+        Some(s) => s,
+        None => return Json(serde_json::json!({"success": false, "error": "Session not found"})),
+    };
+
+    let data = serde_json::json!({
+        "name": req.name,
+        "timestamp": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        "messages": session.messages,
+        "last_generated_code": session.last_generated_code,
+    });
+
+    let filename = format!("{}.json", req.name.replace(' ', "_"));
+    let filepath = sessions_dir.join(&filename);
+    match std::fs::write(
+        &filepath,
+        serde_json::to_string_pretty(&data).unwrap_or_default(),
+    ) {
+        Ok(_) => Json(serde_json::json!({"success": true, "path": filepath.display().to_string()})),
+        Err(e) => {
+            Json(serde_json::json!({"success": false, "error": format!("Write error: {}", e)}))
+        }
+    }
 }
